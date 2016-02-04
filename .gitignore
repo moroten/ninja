@@ -32,3 +32,5 @@ TAGS
 # Ninja output
 .ninja_deps
 .ninja_log
+
+HashLogTest*
