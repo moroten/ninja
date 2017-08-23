@@ -119,10 +119,24 @@ struct HashLog {
   /// sets *err in case of any errors
   bool   EdgeChanged(const Edge* edge, std::string* err);
 
+  /// check whether an edge and its inputs have changed hash-wise
+  ///
+  /// in case of not changed, the calculated hash is stored in *hash
+  /// sets *err in case of any errors
+  bool   EdgeChanged(const Edge* edge, hash_t *target, std::string* err);
+
   /// persist hashes (source and target) for a finished edge
   ///
   /// sets *err in case of any errors
-  void   EdgeFinished(const Edge* edge, std::string* err);
+  void   EdgeFinished(const Edge* edge, const vector<Node*> &deps_nodes,
+                      std::string* err);
+
+  /// persist hashes (source and target) for a finished edge
+  ///
+  /// the calculated hash is stored in *target
+  /// sets *err in case of any errors
+  void   EdgeFinished(const Edge *edge, const vector<Node*> &deps_nodes,
+                      hash_t *target, std::string* err);
 
   /// recompact the hash log to reduce it to minimum size
   ///

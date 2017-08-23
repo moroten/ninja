@@ -639,7 +639,7 @@ TEST_F(HashLogTest, SimpleFinishedEdges) {
   ASSERT_TRUE(err.empty());
 
   // set the edge to finished
-  log.EdgeFinished(&edge_1_1, &err);
+  log.EdgeFinished(&edge_1_1, vector<Node*>(), &err);
   ASSERT_TRUE(err.empty());
 
   // asking in the same log life time will hit the cache
@@ -679,7 +679,7 @@ TEST_F(HashLogTest, SkippedRun){
 
   /// T1
   // simulate a run with hashing
-  log.EdgeFinished(&edge_2_2, &err);
+  log.EdgeFinished(&edge_2_2, vector<Node*>(), &err);
   ASSERT_TRUE(err.empty());
 
   ASSERT_TRUE(log.Close());
@@ -711,7 +711,7 @@ void influence_test(HashLog log, Edge& edge1, Edge& edge2) {
   ASSERT_TRUE(err.empty());
 
   // finish edge_2 in t1
-  log.EdgeFinished(&edge2, &err);
+  log.EdgeFinished(&edge2, vector<Node*>(), &err);
   ASSERT_TRUE(err.empty());
 
   // go to t2
