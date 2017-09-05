@@ -214,6 +214,7 @@ struct BuildStatus {
 
   enum EdgeStatus {
     kEdgeStarted,
+    kEdgeRunning,
     kEdgeFinished,
   };
 
@@ -224,6 +225,8 @@ struct BuildStatus {
   /// @param status The status of the edge.
   string FormatProgressStatus(const char* progress_status_format,
                               EdgeStatus status) const;
+
+  void UpdateStatus();
 
  private:
   void PrintStatus(Edge* edge, EdgeStatus status);
