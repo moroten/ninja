@@ -40,6 +40,9 @@
 #include "subprocess.h"
 #include "util.h"
 
+static const int kStatusUpdateTimeoutMillis = 100;
+static const int kStatusUpdateMininumWaitMillis = 20;
+
 namespace {
 
 /// A CommandRunner that doesn't actually run the commands.
@@ -49,14 +52,14 @@ struct DryRunCommandRunner : public CommandRunner {
   // Overridden from CommandRunner:
   virtual bool CanRunMore();
   virtual bool StartCommand(Edge* edge);
-  virtual bool WaitForCommand(Result* result);
+  virtual WaitForCommandStatus WaitForCommand(Result* result, int timeout_millis);
 
  private:
   queue<Edge*> finished_;
 };
 
 bool DryRunCommandRunner::CanRunMore() {
-  return true;
+  return finished_.empty();
 }
 
 bool DryRunCommandRunner::StartCommand(Edge* edge) {
@@ -64,14 +67,14 @@ bool DryRunCommandRunner::StartCommand(Edge* edge) {
   return true;
 }
 
-bool DryRunCommandRunner::WaitForCommand(Result* result) {
+CommandRunner::WaitForCommandStatus DryRunCommandRunner::WaitForCommand(Result* result, int timeout_millis) {
    if (finished_.empty())
-     return false;
+     return WaitFailure;
 
    result->status = ExitSuccess;
    result->edge = finished_.front();
    finished_.pop();
-   return true;
+   return CommandFinished;
 }
 
 }  // namespace
@@ -80,16 +83,19 @@ BuildStatus::BuildStatus(const BuildConfig& config)
     : config_(config),
       start_time_millis_(GetTimeMillis()),
       started_edges_(0), finished_edges_(0), total_edges_(0),
-      progress_status_format_(NULL),
+      progress_line_format_(NULL), progress_table_format_(NULL),
       overall_rate_(), current_rate_(config.parallelism) {
 
   // Don't do anything fancy in verbose mode.
   if (config_.verbosity != BuildConfig::NORMAL)
     printer_.set_smart_terminal(false);
 
-  progress_status_format_ = getenv("NINJA_STATUS");
-  if (!progress_status_format_)
-    progress_status_format_ = "[%f/%t] ";
+  progress_line_format_ = getenv("NINJA_STATUS");
+  if (!progress_line_format_)
+    progress_line_format_ = "[%f/%t] ";
+  progress_table_format_ = getenv("NINJA_STATUS_TABLE");
+  if (!progress_table_format_)
+    progress_table_format_ = "[%s/%t] %E elapsed, %L left";
 }
 
 void BuildStatus::PlanHasTotalEdges(int total) {
@@ -98,14 +104,15 @@ void BuildStatus::PlanHasTotalEdges(int total) {
 
 void BuildStatus::BuildEdgeStarted(Edge* edge) {
   int start_time = (int)(GetTimeMillis() - start_time_millis_);
-  running_edges_.insert(make_pair(edge, start_time));
+  running_edges_.push_back(make_pair(edge, start_time));
   ++started_edges_;
 
-  if (edge->use_console() || printer_.is_smart_terminal())
-    PrintStatus(edge, kEdgeStarted);
-
-  if (edge->use_console())
+  if (edge->use_console()) {
+    PrintEdgeStatusPermanently(edge, kEdgeStarted);
     printer_.SetConsoleLocked(true);
+  } else if (printer_.is_smart_terminal()) {
+    PrintStatus(edge, kEdgeStarted);
+  }
 }
 
 void BuildStatus::BuildEdgeFinished(Edge* edge,
@@ -117,10 +124,14 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
 
   ++finished_edges_;
 
-  RunningEdgeMap::iterator i = running_edges_.find(edge);
-  *start_time = i->second;
+  for (RunningEdgeList::iterator i = running_edges_.begin(); i != running_edges_.end(); ++i) {
+    if (i->first == edge) {
+      *start_time = i->second;
+      running_edges_.erase(i);
+      break;
+    }
+  }
   *end_time = (int)(now - start_time_millis_);
-  running_edges_.erase(i);
 
   if (edge->use_console())
     printer_.SetConsoleLocked(false);
@@ -128,7 +139,10 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
   if (config_.verbosity == BuildConfig::QUIET)
     return;
 
-  if (!edge->use_console())
+  // Print the description before anything else.
+  if (!success || !output.empty())
+    PrintEdgeStatusPermanently(edge, kEdgeFinished);
+  else if (!edge->use_console())
     PrintStatus(edge, kEdgeFinished);
 
   // Print the command that is spewing before printing its output.
@@ -138,8 +152,13 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
          o != edge->outputs_.end(); ++o)
       outputs += (*o)->path() + " ";
 
-    printer_.PrintOnNewLine("FAILED: " + outputs + "\n");
-    printer_.PrintOnNewLine(edge->EvaluateCommand() + "\n");
+    // Print the description before anything else.
+    string to_print = FormatProgressStatus(progress_line_format_, kEdgeFinished) +
+      edge->GetDescription() + '\n';
+    printer_.Print(to_print);
+
+    printer_.Print("FAILED: " + outputs + "\n");
+    printer_.Print(edge->GetDescription(true) + "\n");
   }
 
   if (!output.empty()) {
@@ -166,12 +185,17 @@ void BuildStatus::BuildEdgeFinished(Edge* edge,
     _setmode(_fileno(stdout), _O_BINARY);  // Begin Windows extra CR fix
 #endif
 
-    printer_.PrintOnNewLine(final_output);
+    if (!final_output.empty() && *final_output.rbegin() != '\n')
+      final_output += '\n';
+    printer_.Print(final_output);
 
 #ifdef _MSC_VER
     _setmode(_fileno(stdout), _O_TEXT);  // End Windows extra CR fix
 #endif
   }
+
+  if (!edge->use_console() && printer_.is_smart_terminal())
+    PrintStatus(edge, kEdgeFinished);
 }
 
 void BuildStatus::BuildStarted() {
@@ -181,7 +205,9 @@ void BuildStatus::BuildStarted() {
 
 void BuildStatus::BuildFinished() {
   printer_.SetConsoleLocked(false);
-  printer_.PrintOnNewLine("");
+  printer_.PrintTemporaryElide();
+  if (config_.verbosity != BuildConfig::QUIET && printer_.is_smart_terminal())
+    printer_.Print(FormatProgressStatus(progress_line_format_, kEdgeFinished) + "Finished\n");
 }
 
 string BuildStatus::FormatProgressStatus(
@@ -248,11 +274,12 @@ string BuildStatus::FormatProgressStatus(
 
         // Percentage
       case 'p':
-        percent = (100 * finished_edges_) / total_edges_;
+        percent = (100 * finished_edges_) / max(total_edges_, 1);
         snprintf(buf, sizeof(buf), "%3i%%", percent);
         out += buf;
         break;
 
+        // Elapsed 0.000
       case 'e': {
         double elapsed = overall_rate_.Elapsed();
         snprintf(buf, sizeof(buf), "%.3f", elapsed);
@@ -260,8 +287,44 @@ string BuildStatus::FormatProgressStatus(
         break;
       }
 
+        // Elapsed, 0:00 or 0.0 if less than a minute
+      case 'E': {
+        double elapsed = overall_rate_.Elapsed();
+        int elapsed_minutes = (int)elapsed / 60;
+        double elapsed_seconds = elapsed - 60 * elapsed_minutes;
+        if (elapsed_minutes > 0)
+          snprintf(buf, sizeof(buf), "%d:%02.0f", elapsed_minutes, elapsed_seconds);
+        else
+          snprintf(buf, sizeof(buf), "%4.1f", elapsed_seconds);
+        out += buf;
+        break;
+      }
+
+        // Time left 0.000
+      case 'l': {
+        double elapsed = overall_rate_.Elapsed();
+        double estimated_left = (total_edges_ - started_edges_) * elapsed / max(started_edges_, 1);
+        snprintf(buf, sizeof(buf), "%.3f", estimated_left);
+        out += buf;
+        break;
+      }
+
+        // Time left 0:00 or 0.0 if less than a minute
+      case 'L': {
+        double elapsed = overall_rate_.Elapsed();
+        double estimated_left = (total_edges_ - started_edges_) * elapsed / max(started_edges_, 1);
+        int estimated_left_minutes = (int)estimated_left / 60;
+        double estimated_left_seconds = estimated_left - 60 * estimated_left_minutes;
+        if (estimated_left_minutes > 0)
+          snprintf(buf, sizeof(buf), "%d:%02.0f", estimated_left_minutes, estimated_left_seconds);
+        else
+          snprintf(buf, sizeof(buf), "%4.1f", estimated_left_seconds);
+        out += buf;
+        break;
+      }
+
       default:
-        Fatal("unknown placeholder '%%%c' in $NINJA_STATUS", *s);
+        Fatal("unknown placeholder '%%%c' in $NINJA_STATUS or $NINJA_STATUS_TABLE", *s);
         return "";
       }
     } else {
@@ -272,20 +335,85 @@ string BuildStatus::FormatProgressStatus(
   return out;
 }
 
+void BuildStatus::UpdateStatus() {
+  PrintStatus(NULL, kEdgeRunning);
+}
+
 void BuildStatus::PrintStatus(Edge* edge, EdgeStatus status) {
   if (config_.verbosity == BuildConfig::QUIET)
     return;
 
   bool force_full_command = config_.verbosity == BuildConfig::VERBOSE;
 
-  string to_print = edge->GetBinding("description");
-  if (to_print.empty() || force_full_command)
-    to_print = edge->GetBinding("command");
+  if (finished_edges_ == 0) {
+    overall_rate_.Restart();
+    current_rate_.Restart();
+  }
 
-  to_print = FormatProgressStatus(progress_status_format_, status) + to_print;
+  if (printer_.is_smart_terminal() && !config_.dry_run &&
+      progress_table_format_[0] != '\0') {
+    if (edge != NULL && force_full_command) {
+      string to_print = FormatProgressStatus(progress_line_format_, status) +
+        edge->GetDescription(true) + '\n';
+      printer_.Print(to_print);
+    }
 
-  printer_.Print(to_print,
-                 force_full_command ? LinePrinter::FULL : LinePrinter::ELIDE);
+    // Print all active edges
+    vector<string> to_print_lines;
+
+    char first_line_status[128];
+    overall_rate_.UpdateRate(finished_edges_);
+    double elapsed = overall_rate_.Elapsed();
+    int elapsed_minutes = (int)elapsed / 60;
+    double elapsed_seconds = elapsed - 60 * elapsed_minutes;
+    double estimated_left = (total_edges_ - started_edges_) * elapsed / max(started_edges_, 1);
+    int estimated_left_minutes = (int)estimated_left / 60;
+    double estimated_left_seconds = estimated_left - 60 * estimated_left_minutes;
+    snprintf(first_line_status, sizeof(first_line_status), "%d:%02.0f elapsed, %d%%, %d:%02.0f left",
+        elapsed_minutes, elapsed_seconds,
+        (100 * finished_edges_) / total_edges_,
+        estimated_left_minutes, estimated_left_seconds);
+    to_print_lines.push_back(FormatProgressStatus(progress_line_format_, status) + first_line_status);
+
+    int64_t now = GetTimeMillis();
+    int now_time = (int)(now - start_time_millis_);
+    for (RunningEdgeList::iterator i = running_edges_.begin(); i != running_edges_.end(); ++i) {
+      int start_time = i->second;
+      int elapsed_millis = now_time - start_time;
+      char elapsed_str[32];
+      snprintf(elapsed_str, sizeof(elapsed_str), "%4.1fs ", elapsed_millis/1000.0f);
+
+      Edge* cur_edge = i->first;
+      to_print_lines.push_back(elapsed_str + cur_edge->GetDescription());
+    }
+    for (int i = (int)running_edges_.size(); i < config_.parallelism; ++i)
+      to_print_lines.push_back("[IDLE]");
+
+    printer_.PrintTemporaryElide(to_print_lines);
+  } else {
+    // Just print the normal status line.
+    // Cannot print the normal status line without any specific edge specified.
+    if (edge != NULL) {
+      string to_print = FormatProgressStatus(progress_line_format_, status) +
+        edge->GetDescription(force_full_command);
+      if (printer_.is_smart_terminal() && !config_.dry_run)
+        printer_.PrintTemporaryElide(to_print);
+      else
+        printer_.Print(to_print + '\n');
+    }
+  }
+}
+
+void BuildStatus::PrintEdgeStatusPermanently(Edge* edge, EdgeStatus status) {
+  if (config_.verbosity == BuildConfig::QUIET)
+    return;
+
+  bool force_full_command = config_.verbosity == BuildConfig::VERBOSE;
+
+  // Just print a single line.
+  string to_print = FormatProgressStatus(progress_line_format_, status) +
+    edge->GetDescription(force_full_command) + "\n";
+  printer_.Print(to_print);
 }
 
 Plan::Plan() : command_edges_(0), wanted_edges_(0) {}
@@ -489,7 +617,7 @@ struct RealCommandRunner : public CommandRunner {
   virtual ~RealCommandRunner() {}
   virtual bool CanRunMore();
   virtual bool StartCommand(Edge* edge);
-  virtual bool WaitForCommand(Result* result);
+  virtual WaitForCommandStatus WaitForCommand(Result* result, int timeout_millis);
   virtual vector<Edge*> GetActiveEdges();
   virtual void Abort();
 
@@ -528,12 +656,14 @@ bool RealCommandRunner::StartCommand(Edge* edge) {
   return true;
 }
 
-bool RealCommandRunner::WaitForCommand(Result* result) {
+CommandRunner::WaitForCommandStatus RealCommandRunner::WaitForCommand(Result* result, int timeout_millis) {
   Subprocess* subproc;
-  while ((subproc = subprocs_.NextFinished()) == NULL) {
-    bool interrupted = subprocs_.DoWork();
+  if ((subproc = subprocs_.NextFinished()) == NULL) {
+    bool interrupted = subprocs_.DoWork(timeout_millis);
     if (interrupted)
-      return false;
+      return WaitFailure;
+    if ((subproc = subprocs_.NextFinished()) == NULL)
+      return WaitTimeout; // Timeout
   }
 
   result->status = subproc->Finish();
@@ -544,7 +674,7 @@ bool RealCommandRunner::WaitForCommand(Result* result) {
   subproc_to_edge_.erase(e);
 
   delete subproc;
-  return true;
+  return CommandFinished;
 }
 
 Builder::Builder(State* state, const BuildConfig& config,
@@ -666,7 +796,17 @@ bool Builder::Build(string* err) {
     // See if we can reap any finished commands.
     if (pending_commands) {
       CommandRunner::Result result;
-      if (!command_runner_->WaitForCommand(&result) ||
+      CommandRunner::WaitForCommandStatus wait_status;
+      int64_t last_status_update = GetTimeMillis();
+      do {
+        int64_t now = GetTimeMillis();
+        if (now - last_status_update > kStatusUpdateMininumWaitMillis) {
+          status_->UpdateStatus();
+          last_status_update = now;
+        }
+        wait_status = command_runner_->WaitForCommand(&result, kStatusUpdateTimeoutMillis);
+      } while (wait_status == CommandRunner::WaitTimeout);
+      if (wait_status == CommandRunner::WaitFailure ||
           result.status == ExitInterrupted) {
         Cleanup();
         status_->BuildFinished();

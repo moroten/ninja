@@ -446,7 +446,7 @@ struct FakeCommandRunner : public CommandRunner {
   // CommandRunner impl
   virtual bool CanRunMore();
   virtual bool StartCommand(Edge* edge);
-  virtual bool WaitForCommand(Result* result);
+  virtual WaitForCommandStatus WaitForCommand(Result* result, int timeout_millis);
   virtual vector<Edge*> GetActiveEdges();
   virtual void Abort();
 
@@ -575,9 +575,9 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
   return true;
 }
 
-bool FakeCommandRunner::WaitForCommand(Result* result) {
+FakeCommandRunner::WaitForCommandStatus FakeCommandRunner::WaitForCommand(Result* result, int timeout_millis) {
   if (!last_command_)
-    return false;
+    return FakeCommandRunner::WaitFailure;
 
   Edge* edge = last_command_;
   result->edge = edge;
@@ -585,7 +585,7 @@ bool FakeCommandRunner::WaitForCommand(Result* result) {
   if (edge->rule().name() == "interrupt" ||
       edge->rule().name() == "touch-interrupt") {
     result->status = ExitInterrupted;
-    return true;
+    return FakeCommandRunner::WaitFailure;
   }
 
   if (edge->rule().name() == "console") {
@@ -594,7 +594,7 @@ bool FakeCommandRunner::WaitForCommand(Result* result) {
     else
       result->status = ExitFailure;
     last_command_ = NULL;
-    return true;
+    return FakeCommandRunner::CommandFinished;
   }
 
   if (edge->rule().name() == "fail" ||
@@ -603,7 +603,7 @@ bool FakeCommandRunner::WaitForCommand(Result* result) {
   else
     result->status = ExitSuccess;
   last_command_ = NULL;
-  return true;
+  return FakeCommandRunner::CommandFinished;
 }
 
 vector<Edge*> FakeCommandRunner::GetActiveEdges() {
@@ -1904,9 +1904,11 @@ TEST_F(BuildTest, StatusFormatElapsed) {
 }
 
 TEST_F(BuildTest, StatusFormatReplacePlaceholder) {
-  EXPECT_EQ("[%/s0/t0/r0/u0/f0]",
-            status_.FormatProgressStatus("[%%/s%s/t%t/r%r/u%u/f%f]",
+  EXPECT_EQ("[%/s0/t0/r0/u0/f0/p  0%/l0.000/L 0.0]",
+            status_.FormatProgressStatus("[%%/s%s/t%t/r%r/u%u/f%f/p%p/l%l/L%L]",
                 BuildStatus::kEdgeStarted));
+  EXPECT_TRUE(status_.FormatProgressStatus("%e", BuildStatus::kEdgeStarted).size() > 2);
+  EXPECT_TRUE(status_.FormatProgressStatus("%E", BuildStatus::kEdgeStarted).size() > 2);
 }
 
 TEST_F(BuildTest, FailedDepsParse) {

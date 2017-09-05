@@ -16,6 +16,7 @@
 #define NINJA_BUILD_H_
 
 #include <cstdio>
+#include <list>
 #include <map>
 #include <memory>
 #include <queue>
@@ -115,8 +116,15 @@ struct CommandRunner {
     string output;
     bool success() const { return status == ExitSuccess; }
   };
+  enum WaitForCommandStatus {
+    CommandFinished,
+    WaitFailure,
+    WaitTimeout
+  };
+
   /// Wait for a command to complete, or return false if interrupted.
-  virtual bool WaitForCommand(Result* result) = 0;
+  /// Infinite wait if timeout_millis = -1.
+  virtual WaitForCommandStatus WaitForCommand(Result* result, int timeout_millis) = 0;
 
   virtual vector<Edge*> GetActiveEdges() { return vector<Edge*>(); }
   virtual void Abort() {}
@@ -206,6 +214,7 @@ struct BuildStatus {
 
   enum EdgeStatus {
     kEdgeStarted,
+    kEdgeRunning,
     kEdgeFinished,
   };
 
@@ -217,8 +226,11 @@ struct BuildStatus {
   string FormatProgressStatus(const char* progress_status_format,
                               EdgeStatus status) const;
 
+  void UpdateStatus();
+
  private:
   void PrintStatus(Edge* edge, EdgeStatus status);
+  void PrintEdgeStatusPermanently(Edge* edge, EdgeStatus status);
 
   const BuildConfig& config_;
 
@@ -228,14 +240,18 @@ struct BuildStatus {
   int started_edges_, finished_edges_, total_edges_;
 
   /// Map of running edge to time the edge started running.
-  typedef map<Edge*, int> RunningEdgeMap;
-  RunningEdgeMap running_edges_;
+  typedef list<pair<Edge*, int> > RunningEdgeList;
+  RunningEdgeList running_edges_;
 
   /// Prints progress output.
   LinePrinter printer_;
 
-  /// The custom progress status format to use.
-  const char* progress_status_format_;
+  /// The custom progress status format to used for the
+  /// single line printout.
+  const char* progress_line_format_;
+  /// The custom progress status format to used for the
+  /// table printout.
+  const char* progress_table_format_;
 
   template<size_t S>
   void SnprintfRate(double rate, char(&buf)[S], const char* format) const {
