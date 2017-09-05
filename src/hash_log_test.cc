@@ -17,7 +17,7 @@
 #include <sstream>
 #include <iostream>
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 #include <windows.h>
 #else
 #include <time.h>
@@ -27,9 +27,10 @@
 #include "graph.h"
 #include "hash_log.h"
 #include "test.h"
+#include "util.h"
 
 void wait(uint32_t millis) {
-#ifdef _WIN32
+#ifdef _MSC_VER
   Sleep(millis);
 #else
   timespec t;

@@ -19,7 +19,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#ifndef _WIN32
+#ifndef _MSC_VER
 #include <unistd.h>
 #endif
 

@@ -22,7 +22,7 @@
 
 #include <stdio.h>
 
-#ifdef _WIN32
+#ifdef _MCS_VER
 #include "win32port.h"
 #else
 #include <stdint.h>

@@ -120,12 +120,35 @@ int MSVCHelperMain(int argc, char** argv) {
     PushPathIntoEnvironment(env);
   }
 
+#ifdef _MSC_VER
   char* command = GetCommandLine();
   command = strstr(command, " -- ");
   if (!command) {
     Fatal("expected command line to end with \" -- command args\"");
   }
   command += 4;
+#else
+  string command_buffer;
+  int argidx = 1;
+  for (argidx = 1; argidx < argc; ++argidx) {
+    if (strcmp(argv[argidx], "--") == 0)
+      break;
+  }
+  for (++argidx; argidx < argc; ++argidx) {
+    if (strchr(argv[argidx], '"') || strchr(argv[argidx], '\''))
+      Fatal("command line must not contain '\"' or '\''");
+    if (!command_buffer.empty())
+      command_buffer += " ";
+    if (strchr(argv[argidx], ' ')) {
+      command_buffer += '"';
+      command_buffer += argv[argidx];
+      command_buffer += '"';
+    } else {
+      command_buffer += argv[argidx];
+    }
+  }
+  const char* command = command_buffer.c_str();
+#endif
 
   CLWrapper cl;
   if (!env.empty())
