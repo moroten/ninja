@@ -21,6 +21,7 @@
 using namespace std;
 
 #include "eval_env.h"
+#include "hash_log.h"
 #include "timestamp.h"
 #include "util.h"
 
@@ -271,7 +272,8 @@ struct DependencyScan {
                  DiskInterface* disk_interface)
       : build_log_(build_log),
         disk_interface_(disk_interface),
-        dep_loader_(state, deps_log, disk_interface) {}
+        dep_loader_(state, deps_log, disk_interface),
+        hash_log_(kHashLogFileName, disk_interface) {}
 
   /// Update the |dirty_| state of the given node by inspecting its input edge.
   /// Examine inputs, outputs, and command lines to judge whether an edge
@@ -296,6 +298,10 @@ struct DependencyScan {
     return dep_loader_.deps_log();
   }
 
+  HashLog& hash_log() {
+    return hash_log_;
+  }
+
  private:
   bool RecomputeDirty(Node* node, vector<Node*>* stack, string* err);
   bool VerifyDAG(Node* node, vector<Node*>* stack, string* err);
@@ -308,6 +314,7 @@ struct DependencyScan {
   BuildLog* build_log_;
   DiskInterface* disk_interface_;
   ImplicitDepLoader dep_loader_;
+  HashLog hash_log_;
 };
 
 #endif  // NINJA_GRAPH_H_
