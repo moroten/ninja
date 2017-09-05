@@ -16,7 +16,11 @@
 
 #include <algorithm>
 
+#ifdef _MSC_VER
 #include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "string_piece_util.h"
 #include "test.h"
@@ -26,7 +30,10 @@ namespace {
 
 string GetCurDir() {
   char buf[_MAX_PATH];
-  _getcwd(buf, sizeof(buf));
+  getcwd(buf, sizeof(buf));
+#ifndef _MSC_VER  // mingw returns / paths on Windows
+  replace(buf, buf + strlen(buf), '/', '\\');
+#endif
   vector<StringPiece> parts = SplitStringPiece(buf, '\\');
   return parts[parts.size() - 1].AsString();
 }
