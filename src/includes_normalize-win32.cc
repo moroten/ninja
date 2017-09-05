@@ -26,6 +26,22 @@
 
 namespace {
 
+bool InternalGetFullPathName(LPCTSTR lpFileName, DWORD nBufferLength,
+                             LPTSTR lpBuffer, LPTSTR *lpFilePart,
+                             string *err) {
+  DWORD result_size = GetFullPathName(lpFileName, nBufferLength,
+                                      lpBuffer, lpFilePart);
+  if (result_size == 0) {
+    *err = string("GetFullPathName(") + lpFileName + "): " +
+        GetLastErrorString();
+    return false;
+  } else if (result_size > nBufferLength) {
+    *err = "path too long";
+    return false;
+  }
+  return true;
+}
+
 bool IsPathSeparator(char c) {
   return c == '/' ||  c == '\\';
 }
@@ -54,15 +70,21 @@ bool SameDriveFast(StringPiece a, StringPiece b) {
 }
 
 // Return true if paths a and b are on the same Windows drive.
-bool SameDrive(StringPiece a, StringPiece b)  {
+bool SameDrive(StringPiece a, StringPiece b, string* err)  {
   if (SameDriveFast(a, b)) {
     return true;
   }
 
   char a_absolute[_MAX_PATH];
   char b_absolute[_MAX_PATH];
-  GetFullPathName(a.AsString().c_str(), sizeof(a_absolute), a_absolute, NULL);
-  GetFullPathName(b.AsString().c_str(), sizeof(b_absolute), b_absolute, NULL);
+  if (!InternalGetFullPathName(a.AsString().c_str(),
+                               sizeof(a_absolute), a_absolute, NULL, err)) {
+    return false;
+  }
+  if (!InternalGetFullPathName(b.AsString().c_str(),
+                               sizeof(b_absolute), b_absolute, NULL, err)) {
+    return false;
+  }
   char a_drive[_MAX_DIR];
   char b_drive[_MAX_DIR];
   _splitpath(a_absolute, a_drive, NULL, NULL, NULL);
@@ -106,11 +128,15 @@ bool IsFullPathName(StringPiece s) {
 }  // anonymous namespace
 
 IncludesNormalize::IncludesNormalize(const string& relative_to) {
-  relative_to_ = AbsPath(relative_to);
+  string err;
+  relative_to_ = AbsPath(relative_to, &err);
+  if (!err.empty()) {
+    Fatal("Initializing IncludesNormalize(): %s", err.c_str());
+  }
   split_relative_to_ = SplitStringPiece(relative_to_, '/');
 }
 
-string IncludesNormalize::AbsPath(StringPiece s) {
+string IncludesNormalize::AbsPath(StringPiece s, string* err) {
   if (IsFullPathName(s)) {
     string result = s.AsString();
     for (size_t i = 0; i < result.size(); ++i) {
@@ -122,7 +148,10 @@ string IncludesNormalize::AbsPath(StringPiece s) {
   }
 
   char result[_MAX_PATH];
-  GetFullPathName(s.AsString().c_str(), sizeof(result), result, NULL);
+  if (!InternalGetFullPathName(s.AsString().c_str(),
+      sizeof(result), result, NULL, err)) {
+    return "";
+  }
   for (char* c = result; *c; ++c)
     if (*c == '\\')
       *c = '/';
@@ -130,8 +159,10 @@ string IncludesNormalize::AbsPath(StringPiece s) {
 }
 
 string IncludesNormalize::Relativize(
-    StringPiece path, const vector<StringPiece>& start_list) {
-  string abs_path = AbsPath(path);
+    StringPiece path, const vector<StringPiece>& start_list, string* err) {
+  string abs_path = AbsPath(path, err);
+  if (!err->empty())
+    return "";
   vector<StringPiece> path_list = SplitStringPiece(abs_path, '/');
   int i;
   for (i = 0; i < static_cast<int>(min(start_list.size(), path_list.size()));
@@ -165,12 +196,18 @@ bool IncludesNormalize::Normalize(const string& input,
   if (!CanonicalizePath(copy, &len, &slash_bits, err))
     return false;
   StringPiece partially_fixed(copy, len);
-  string abs_input = AbsPath(partially_fixed);
+  string abs_input = AbsPath(partially_fixed, err);
+  if (!err->empty())
+    return false;
 
-  if (!SameDrive(abs_input, relative_to_)) {
+  if (!SameDrive(abs_input, relative_to_, err)) {
+    if (!err->empty())
+      return false;
     *result = partially_fixed.AsString();
     return true;
   }
-  *result = Relativize(abs_input, split_relative_to_);
+  *result = Relativize(abs_input, split_relative_to_, err);
+  if (!err->empty())
+    return false;
   return true;
 }
