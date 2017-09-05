@@ -350,7 +350,8 @@ void BuildStatus::PrintStatus(Edge* edge, EdgeStatus status) {
     current_rate_.Restart();
   }
 
-  if (printer_.is_smart_terminal() && progress_table_format_[0] != '\0') {
+  if (printer_.is_smart_terminal() && !config_.dry_run &&
+      progress_table_format_[0] != '\0') {
     if (edge != NULL && force_full_command) {
       string to_print = FormatProgressStatus(progress_line_format_, status) +
         edge->GetDescription(true) + '\n';
@@ -395,7 +396,7 @@ void BuildStatus::PrintStatus(Edge* edge, EdgeStatus status) {
     if (edge != NULL) {
       string to_print = FormatProgressStatus(progress_line_format_, status) +
         edge->GetDescription(force_full_command);
-      if (printer_.is_smart_terminal())
+      if (printer_.is_smart_terminal() && !config_.dry_run)
         printer_.PrintTemporaryElide(to_print);
       else
         printer_.Print(to_print + '\n');
