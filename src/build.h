@@ -62,7 +62,7 @@ struct Plan {
   };
 
   /// Mark an edge as done building (whether it succeeded or failed).
-  void EdgeFinished(Edge* edge, EdgeResult result);
+  bool EdgeFinished(Edge* edge, EdgeResult result, string* err);
 
   /// Checks if this node is part of the current build.
   bool NodeWanted(Node* node);
@@ -79,12 +79,12 @@ struct Plan {
 
 private:
   bool AddSubTarget(Node* node, Node* dependent, string* err);
-  void NodeFinished(Node* node);
+  bool NodeFinished(Node* node, string* err);
 
   /// Submits a ready edge as a candidate for execution.
   /// The edge may be delayed from running, for example if it's a member of a
   /// currently-full pool.
-  void ScheduleWork(Edge* edge);
+  bool ScheduleWork(Edge* edge, string* err);
 
   /// Keep track of which edges we want to build in this plan.  If this map does
   /// not contain an entry for an edge, we do not want to build the entry or its

@@ -328,8 +328,10 @@ bool Plan::AddSubTarget(Node* node, Node* dependent, string* err) {
   if (node->dirty() && !want) {
     want = true;
     ++wanted_edges_;
-    if (edge->AllInputsReady())
-      ScheduleWork(edge);
+    if (edge->AllInputsReady()) {
+      if (!ScheduleWork(edge, err))
+        return false;
+    }
     if (!edge->is_phony())
       ++command_edges_;
   }
@@ -355,14 +357,14 @@ Edge* Plan::FindWork() {
   return edge;
 }
 
-void Plan::ScheduleWork(Edge* edge) {
+bool Plan::ScheduleWork(Edge* edge, string* err) {
   set<Edge*>::iterator e = ready_.lower_bound(edge);
   if (e != ready_.end() && !ready_.key_comp()(edge, *e)) {
     // This edge has already been scheduled.  We can get here again if an edge
     // and one of its dependencies share an order-only input, or if a node
     // duplicates an out edge (see https://github.com/ninja-build/ninja/pull/519).
     // Avoid scheduling the work again.
-    return;
+    return true;
   }
 
   Pool* pool = edge->pool();
@@ -373,9 +375,10 @@ void Plan::ScheduleWork(Edge* edge) {
     pool->EdgeScheduled(*edge);
     ready_.insert(e, edge);
   }
+  return true;
 }
 
-void Plan::EdgeFinished(Edge* edge, EdgeResult result) {
+bool Plan::EdgeFinished(Edge* edge, EdgeResult result, string* err) {
   map<Edge*, bool>::iterator e = want_.find(edge);
   assert(e != want_.end());
   bool directly_wanted = e->second;
@@ -387,7 +390,7 @@ void Plan::EdgeFinished(Edge* edge, EdgeResult result) {
 
   // The rest of this function only applies to successful commands.
   if (result != kEdgeSucceeded)
-    return;
+    return true;
 
   if (directly_wanted)
     --wanted_edges_;
@@ -397,11 +400,13 @@ void Plan::EdgeFinished(Edge* edge, EdgeResult result) {
   // Check off any nodes we were waiting for with this edge.
   for (vector<Node*>::iterator o = edge->outputs_.begin();
        o != edge->outputs_.end(); ++o) {
-    NodeFinished(*o);
+    if (!NodeFinished(*o, err))
+      return false;
   }
+  return true;
 }
 
-void Plan::NodeFinished(Node* node) {
+bool Plan::NodeFinished(Node* node, string* err) {
   // See if we we want any edges from this node.
   for (vector<Edge*>::const_iterator oe = node->out_edges().begin();
        oe != node->out_edges().end(); ++oe) {
@@ -412,14 +417,17 @@ void Plan::NodeFinished(Node* node) {
     // See if the edge is now ready.
     if ((*oe)->AllInputsReady()) {
       if (want_e->second) {
-        ScheduleWork(*oe);
+        if (!ScheduleWork(*oe, err))
+          return false;
       } else {
         // We do not need to build this edge, but we might need to build one of
         // its dependents.
-        EdgeFinished(*oe, kEdgeSucceeded);
+        if (!EdgeFinished(*oe, kEdgeSucceeded, err))
+          return false;
       }
     }
   }
+  return true;
 }
 
 bool Plan::NodeWanted(Node* node) {
@@ -663,7 +671,11 @@ bool Builder::Build(string* err) {
         }
 
         if (edge->is_phony()) {
-          plan_.EdgeFinished(edge, Plan::kEdgeSucceeded);
+          if (!plan_.EdgeFinished(edge, Plan::kEdgeSucceeded, err)) {
+            Cleanup();
+            status_->BuildFinished();
+            return false;
+          }
         } else {
           ++pending_commands;
         }
@@ -831,8 +843,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
 
   // The rest of this function only applies to successful commands.
   if (!result->success()) {
-    plan_.EdgeFinished(edge, Plan::kEdgeFailed);
-    return true;
+    return plan_.EdgeFinished(edge, Plan::kEdgeFailed, err);
   }
 
   if (!config_.dry_run) {
@@ -872,7 +883,8 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     }
   }
 
-  plan_.EdgeFinished(edge, Plan::kEdgeSucceeded);
+  if (!plan_.EdgeFinished(edge, Plan::kEdgeSucceeded, err))
+    return false;
 
   // Delete any left over response file.
   string rspfile = edge->GetUnescapedRspfile();
