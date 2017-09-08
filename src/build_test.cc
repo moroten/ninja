@@ -2271,6 +2271,8 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
     ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
+    fs_.Create("header.in", "");
+
     // Run the build once, everything should be ok.
     DepsLog deps_log;
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
@@ -2386,13 +2388,15 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
       "  command = true\n"  // Would be "write if out-of-date" in reality.
       "  restat = 1\n"
       "build header.h: true header.in\n"
-      "build out: cat in1\n"
+      "build out: cat in1 || header.h\n"
       "  deps = gcc\n"
       "  depfile = in1.d\n";
   {
     State state;
     ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
+
+    fs_.Create("header.in", "");
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
