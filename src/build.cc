@@ -767,6 +767,37 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     }
   }
 
+  // Restat the edge outputs
+  TimeStamp restat_mtime = 0;
+  bool restat = edge->GetBindingBool("restat");
+  bool node_cleaned = false;
+  if (!config_.dry_run && result->success()) {
+    for (vector<Node*>::iterator o = edge->outputs_.begin();
+         o != edge->outputs_.end(); ++o) {
+      TimeStamp old_mtime = (*o)->mtime();
+      if (!(*o)->Stat(disk_interface_, err))
+        return false;
+      TimeStamp new_mtime = (*o)->mtime();
+      if (old_mtime == new_mtime) {
+        if (!restat) {
+          // If restat is not set, the edge should update its outputs.
+          if (!result->output.empty())
+            result->output.append("\n");
+          result->output.append((*o)->path() +
+                                " was not updated when building");
+          result->status = ExitFailure;
+        } else {
+          // The rule command did not change the output.  Propagate the clean
+          // state through the build graph.
+          // Note that this also applies to nonexistent outputs (mtime == 0).
+          if (!plan_.CleanNode(&scan_, *o, err))
+            return false;
+          node_cleaned = true;
+        }
+      }
+    }
+  }
+
   int start_time, end_time;
   status_->BuildEdgeFinished(edge, result->success(), result->output,
                              &start_time, &end_time);
@@ -777,28 +808,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     return true;
   }
 
-  // Restat the edge outputs
-  TimeStamp restat_mtime = 0;
-  bool restat = edge->GetBindingBool("restat");
   if (!config_.dry_run) {
-    bool node_cleaned = false;
-
-    for (vector<Node*>::iterator o = edge->outputs_.begin();
-         o != edge->outputs_.end(); ++o) {
-      TimeStamp old_mtime = (*o)->mtime();
-      if (!(*o)->Stat(disk_interface_, err))
-        return false;
-      TimeStamp new_mtime = (*o)->mtime();
-      if (old_mtime == new_mtime && restat) {
-        // The rule command did not change the output.  Propagate the clean
-        // state through the build graph.
-        // Note that this also applies to nonexistent outputs (mtime == 0).
-        if (!plan_.CleanNode(&scan_, *o, err))
-          return false;
-        node_cleaned = true;
-      }
-    }
-
     if (node_cleaned) {
       // If any output was cleaned, find the most recent mtime of any
       // (existing) non-order-only input or the depfile.

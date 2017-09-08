@@ -751,6 +751,7 @@ TEST_F(BuildTest, MultiOutIn) {
   string err;
   EXPECT_TRUE(builder_.AddTarget("out", &err));
   ASSERT_EQ("", err);
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ("", err);
 }
@@ -1194,6 +1195,7 @@ TEST_F(BuildTest, PoolEdgesReadyButNotWanted) {
   fs_.RemoveFile("B.d.stamp");
 
   State save_state;
+  fs_.Tick();
   RebuildTarget("final.stamp", manifest, NULL, NULL, &save_state);
   EXPECT_GE(save_state.LookupPool("some_pool")->current_use(), 0);
 }
@@ -1227,6 +1229,7 @@ TEST_F(BuildWithLogTest, NotInLogButOnDisk) {
   state_.Reset();
 
   EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_TRUE(builder_.AlreadyUpToDate());
 }
@@ -1299,6 +1302,7 @@ TEST_F(BuildWithLogTest, RebuildAfterOutputChanged) {
   // Run again, should rerun because the build log has different output mtime
   EXPECT_TRUE(builder_.AddTarget("out1", &err));
   EXPECT_FALSE(builder_.AlreadyUpToDate());
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ(1u, command_runner_.commands_ran_.size());
   EXPECT_EQ("", err);
@@ -1435,6 +1439,7 @@ TEST_F(BuildWithLogTest, RebuildAfterRestatOutputChanged) {
   // most recent input mtime
   EXPECT_TRUE(builder_.AddTarget("out1", &err));
   EXPECT_FALSE(builder_.AlreadyUpToDate());
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ(1u, command_runner_.commands_ran_.size());
   EXPECT_EQ("", err);
@@ -1463,6 +1468,7 @@ TEST_F(BuildWithLogTest, RestatMissingFile) {
   string err;
   EXPECT_TRUE(builder_.AddTarget("out2", &err));
   ASSERT_EQ("", err);
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   ASSERT_EQ("", err);
   command_runner_.commands_ran_.clear();
@@ -1744,6 +1750,7 @@ TEST_F(BuildWithLogTest, RspFileCmdLineChange) {
   state_.Reset();
   EXPECT_TRUE(builder_.AddTarget("out", &err));
   EXPECT_EQ("", err);
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ(1u, command_runner_.commands_ran_.size());
 }
@@ -1818,6 +1825,7 @@ TEST_F(BuildTest, PhonyWithNoInputs) {
   state_.Reset();
   EXPECT_TRUE(builder_.AddTarget("out2", &err));
   ASSERT_EQ("", err);
+  fs_.Tick();
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ("", err);
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
@@ -2327,6 +2335,7 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
     // Recreate the deps file here because the build expects them to exist.
     fs_.Create("in1.d", "out: ");
 
+    fs_.Tick();
     EXPECT_TRUE(builder.Build(&err));
     EXPECT_EQ("", err);
 
@@ -2603,6 +2612,7 @@ const char* manifest =
   // its rule doesn't touch the output and has 'restat=1' set.
   // But we are also missing the depfile for 'out',
   // which should force its command to run anyway!
+  fs_.Tick();
   RebuildTarget("out", manifest);
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 }
@@ -2651,6 +2661,7 @@ TEST_F(BuildWithDepsLogTest, RestatMissingDepfileDepslog) {
   fs_.Tick();
   fs_.Create("header.in", "");
   fs_.Create("out", "");
+  fs_.Tick();
   RebuildTarget("out", manifest, "build_log", "ninja_deps2");
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 
@@ -2672,6 +2683,7 @@ TEST_F(BuildTest, WrongOutputInDepfileCausesRebuild) {
   fs_.Create("header.h", "");
   fs_.Create("foo.o.d", "bar.o.d: header.h\n");
 
+  fs_.Tick();
   RebuildTarget("foo.o", manifest, "build_log", "ninja_deps");
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
 }
@@ -2681,6 +2693,7 @@ TEST_F(BuildTest, Console) {
 "rule console\n"
 "  command = console\n"
 "  pool = console\n"
+"  restat = 1\n"
 "build cons: console in.txt\n"));
 
   fs_.Create("in.txt", "");
