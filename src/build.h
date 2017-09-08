@@ -64,6 +64,9 @@ struct Plan {
   /// Mark an edge as done building (whether it succeeded or failed).
   void EdgeFinished(Edge* edge, EdgeResult result);
 
+  /// Checks if this node is part of the current build.
+  bool NodeWanted(Node* node);
+
   /// Clean the given node during the build.
   /// Return false on error.
   bool CleanNode(DependencyScan* scan, Node* node, string* err);
@@ -173,6 +176,11 @@ struct Builder {
   /// Used for tests.
   void SetBuildLog(BuildLog* log) {
     scan_.set_build_log(log);
+  }
+
+  /// Used for tests. Should be done between builds to detect file changes.
+  void ResetHashLog() {
+    scan_.hash_log().Close();
   }
 
   State* state_;

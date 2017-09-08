@@ -561,6 +561,25 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
          out != edge->outputs_.end(); ++out) {
       fs_->Create((*out)->path(), "");
     }
+  } else if (edge->rule().name() == "cp") {
+    if (edge->inputs_.size() != 1) {
+      printf("too many inputs to cp");
+      return false;
+    }
+    Node* in = edge->inputs_[0];
+    for (vector<Node*>::iterator out = edge->outputs_.begin();
+         out != edge->outputs_.end(); ++out) {
+      string content, err;
+      if (fs_->ReadFile(in->path(), &content, &err) != FileReader::Okay ||
+          !err.empty()) {
+        printf("read file failed");
+        return false;
+      }
+      if (!fs_->WriteFile((*out)->path(), content)) {
+        printf("write file failed");
+        return false;
+      }
+    }
   } else if (edge->rule().name() == "create") {
     for (vector<Node*>::iterator out = edge->outputs_.begin();
          out != edge->outputs_.end(); ++out) {
@@ -2686,6 +2705,135 @@ TEST_F(BuildTest, WrongOutputInDepfileCausesRebuild) {
   fs_.Tick();
   RebuildTarget("foo.o", manifest, "build_log", "ninja_deps");
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+}
+
+TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cc\n"
+"  command = cc\n"
+"  hash_input = 1\n"
+"build out1: cc in\n"
+"build out2: cat out1\n"
+"build out3: cat out2\n"));
+
+  fs_.Create("out1", "1");
+  fs_.Create("out2", "2");
+  fs_.Create("out3", "3");
+
+  fs_.Tick();
+  fs_.Create("in", "");
+
+  // Do a pre-build so that there's commands in the log for the outputs,
+  // otherwise, the lack of an entry in the build log will cause out3 to rebuild
+  // regardless of restat.
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  ASSERT_EQ(3u, command_runner_.commands_ran_.size());
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+
+  fs_.Tick();
+  fs_.Create("in", "A");
+
+  // "cc" touches out1, so we should build it all.
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ(3u, command_runner_.commands_ran_.size());
+
+  // If we run again, it should be a no-op.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+
+  fs_.Tick();
+  fs_.Create("in", "A");
+
+  // Touching in, but keeping the same content, should not lead to rebuild.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+
+  // If we run again, it should be a no-op.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+}
+
+TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cp\n"
+"  command = cp\n"
+"  hash_input = 1\n"
+"build out1: cp in\n"
+"build out2: cp out1\n"
+"build out3: cat out2\n"));
+
+  fs_.Create("out1", "1");
+  fs_.Create("out2", "2");
+  fs_.Create("out3", "3");
+
+  fs_.Tick();
+  fs_.Create("in", "A");
+
+  // Do a pre-build so that there's commands in the log for the outputs,
+  // otherwise, the lack of an entry in the build log will cause out3 to rebuild
+  // regardless of restat.
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  ASSERT_EQ(3u, command_runner_.commands_ran_.size());
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+
+  fs_.Tick();
+  fs_.Create("in", "B");
+
+  // Modifying in should rebuild out1.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+  fs_.Tick();
+  fs_.Create("in", "A");
+
+  // Reverting in should rebuild out1, but as out1 has now the same
+  // content as when out2 was built last time, out2 should not be rebuilt.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+  // If we run again, it should be a no-op.
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out3", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
 }
 
 TEST_F(BuildTest, Console) {

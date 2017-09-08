@@ -422,6 +422,16 @@ void Plan::NodeFinished(Node* node) {
   }
 }
 
+bool Plan::NodeWanted(Node* node) {
+  for (vector<Edge*>::const_iterator oe = node->out_edges().begin();
+       oe != node->out_edges().end(); ++oe) {
+    map<Edge*, bool>::iterator want_e = want_.find(*oe);
+    if (want_e != want_.end() && want_e->second)
+      return true;
+  }
+  return false;
+}
+
 bool Plan::CleanNode(DependencyScan* scan, Node* node, string* err) {
   node->set_dirty(false);
 
@@ -770,7 +780,8 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
   // Restat the edge outputs
   TimeStamp restat_mtime = 0;
   bool restat = edge->GetBindingBool("restat");
-  bool node_cleaned = false;
+  bool hash_input = edge->GetBindingBool("hash_input");
+  bool node_untouched = false;
   if (!config_.dry_run && result->success()) {
     for (vector<Node*>::iterator o = edge->outputs_.begin();
          o != edge->outputs_.end(); ++o) {
@@ -778,6 +789,8 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
       if (!(*o)->Stat(disk_interface_, err))
         return false;
       TimeStamp new_mtime = (*o)->mtime();
+
+      bool clean_this_node = false;
       if (old_mtime == new_mtime) {
         if (!restat) {
           // If restat is not set, the edge should update its outputs.
@@ -787,13 +800,27 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
                                 " was not updated when building");
           result->status = ExitFailure;
         } else {
-          // The rule command did not change the output.  Propagate the clean
-          // state through the build graph.
-          // Note that this also applies to nonexistent outputs (mtime == 0).
-          if (!plan_.CleanNode(&scan_, *o, err))
-            return false;
-          node_cleaned = true;
+          node_untouched = true;
+          clean_this_node = true;
         }
+      } else if (hash_input) {
+        // Even if the output has been updated, it may still have the same
+        // content. Only update the hash_log if the node is actually wanted.
+        // By being restrictive here makes it possible to revert *o to its
+        // previous and actually get the output edges up to date.
+        if (plan_.NodeWanted(*o)) {
+          if (!scan_.hash_log().HashChanged(*o, HashLog::SOURCE, err))
+            clean_this_node = true;
+          if (!err->empty())
+            return false;
+        }
+      }
+      if (clean_this_node) {
+        // The rule command did not change the output.  Propagate the clean
+        // state through the build graph.
+        // Note that this also applies to nonexistent outputs (mtime == 0).
+        if (!plan_.CleanNode(&scan_, *o, err))
+          return false;
       }
     }
   }
@@ -809,8 +836,8 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
   }
 
   if (!config_.dry_run) {
-    if (node_cleaned) {
-      // If any output was cleaned, find the most recent mtime of any
+    if (node_untouched) {
+      // If any output was untouched, find the most recent mtime of any
       // (existing) non-order-only input or the depfile.
       for (vector<Node*>::iterator i = edge->inputs_.begin();
            i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
