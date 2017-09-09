@@ -1265,6 +1265,34 @@ TEST_F(BuildWithLogTest, RebuildAfterFailure) {
   EXPECT_EQ("", err);
 }
 
+TEST_F(BuildWithLogTest, RebuildAfterOutputChanged) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cc\n"
+"  command = cc\n"
+"build out1: cc in\n"));
+
+  fs_.Create("in", "");
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  EXPECT_FALSE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(builder_.Build(&err));
+  EXPECT_EQ(1u, command_runner_.commands_ran_.size());
+  EXPECT_EQ("", err);
+
+  fs_.Tick();
+  fs_.Create("out1", "");
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+
+  // Run again, should rerun because the build log has different output mtime
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  EXPECT_FALSE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(builder_.Build(&err));
+  EXPECT_EQ(1u, command_runner_.commands_ran_.size());
+  EXPECT_EQ("", err);
+}
+
 TEST_F(BuildWithLogTest, RebuildWithNoInputs) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule touch\n"
@@ -1361,6 +1389,46 @@ TEST_F(BuildWithLogTest, RestatTest) {
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 }
 
+TEST_F(BuildWithLogTest, RebuildAfterRestatOutputChanged) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule true\n"
+"  command = true\n"
+"  restat = 1\n"
+"build out1: true in\n"));
+
+  fs_.Create("out1", "");
+  fs_.Tick();
+  fs_.Create("in", "");
+
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  EXPECT_FALSE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(builder_.Build(&err));
+  EXPECT_EQ(1u, command_runner_.commands_ran_.size());
+  EXPECT_EQ("", err);
+
+  // out1 should not have been touched
+  ASSERT_LT(fs_.files_["out1"].mtime, fs_.files_["in"].mtime);
+  // Make sure up to date
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+
+  // Touch out1
+  fs_.Tick();
+  fs_.Create("out1", "");
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+
+  // Run again, should rerun because the build log has different
+  // most recent input mtime
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  EXPECT_FALSE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(builder_.Build(&err));
+  EXPECT_EQ(1u, command_runner_.commands_ran_.size());
+  EXPECT_EQ("", err);
+}
+
 TEST_F(BuildWithLogTest, RestatMissingFile) {
   // If a restat rule doesn't create its output, and the output didn't
   // exist before the rule was run, consider that behavior equivalent
@@ -1391,7 +1459,6 @@ TEST_F(BuildWithLogTest, RestatMissingFile) {
 
   fs_.Tick();
   fs_.Create("in", "");
-  fs_.Create("out2", "");
 
   // Run a build, expect only the first command to run.
   // It doesn't touch its output (due to being the "true" command), so
