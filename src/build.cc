@@ -778,19 +778,18 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
   }
 
   // Restat the edge outputs
-  TimeStamp output_mtime = 0;
+  TimeStamp restat_mtime = 0;
   bool restat = edge->GetBindingBool("restat");
   if (!config_.dry_run) {
     bool node_cleaned = false;
 
     for (vector<Node*>::iterator o = edge->outputs_.begin();
          o != edge->outputs_.end(); ++o) {
-      TimeStamp new_mtime = disk_interface_->Stat((*o)->path(), err);
-      if (new_mtime == -1)
+      TimeStamp old_mtime = (*o)->mtime();
+      if (!(*o)->Stat(disk_interface_, err))
         return false;
-      if (new_mtime > output_mtime)
-        output_mtime = new_mtime;
-      if ((*o)->mtime() == new_mtime && restat) {
+      TimeStamp new_mtime = (*o)->mtime();
+      if (old_mtime == new_mtime && restat) {
         // The rule command did not change the output.  Propagate the clean
         // state through the build graph.
         // Note that this also applies to nonexistent outputs (mtime == 0).
@@ -801,7 +800,6 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     }
 
     if (node_cleaned) {
-      TimeStamp restat_mtime = 0;
       // If any output was cleaned, find the most recent mtime of any
       // (existing) non-order-only input or the depfile.
       for (vector<Node*>::iterator i = edge->inputs_.begin();
@@ -825,8 +823,6 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
       // The total number of edges in the plan may have changed as a result
       // of a restat.
       status_->PlanHasTotalEdges(plan_.command_edge_count());
-
-      output_mtime = restat_mtime;
     }
   }
 
@@ -839,7 +835,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
 
   if (scan_.build_log()) {
     if (!scan_.build_log()->RecordCommand(edge, start_time, end_time,
-                                          output_mtime)) {
+                                          restat_mtime)) {
       *err = string("Error writing to build log: ") + strerror(errno);
       return false;
     }

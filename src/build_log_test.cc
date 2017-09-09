@@ -14,6 +14,7 @@
 
 #include "build_log.h"
 
+#include "graph.h"
 #include "util.h"
 #include "test.h"
 
@@ -262,6 +263,39 @@ TEST_F(BuildLogTest, MultiTargetEdge) {
   ASSERT_EQ(21, e2->start_time);
   ASSERT_EQ(22, e2->end_time);
   ASSERT_EQ(22, e2->end_time);
+}
+
+TEST_F(BuildLogTest, RecordIndividualModifiedTimes) {
+  AssertParse(&state_,
+"build out out.d: cat\n");
+
+  VirtualFileSystem fs;
+  int out_mtime = fs.Tick();
+  fs.Create("out", "");
+  int most_recent_input_mtime = fs.Tick();
+  int outd_mtime = fs.Tick();
+  fs.Create("out.d", "");
+
+  string err;
+  ASSERT_TRUE(GetNode("out")->Stat(&fs, &err));
+  ASSERT_TRUE(GetNode("out.d")->Stat(&fs, &err));
+  ASSERT_EQ(out_mtime, GetNode("out")->mtime());
+  ASSERT_EQ(outd_mtime, GetNode("out.d")->mtime());
+
+  BuildLog log;
+  log.RecordCommand(state_.edges_[0], 21, 22, most_recent_input_mtime);
+
+  ASSERT_EQ(2u, log.entries().size());
+  BuildLog::LogEntry* e1 = log.LookupByOutput("out");
+  ASSERT_TRUE(e1);
+  BuildLog::LogEntry* e2 = log.LookupByOutput("out.d");
+  ASSERT_TRUE(e2);
+  // out older than most_recent_input_mtime
+  ASSERT_EQ("out", e1->output);
+  ASSERT_EQ(most_recent_input_mtime, e1->mtime);
+  // out.d newer than most_recent_input_mtime
+  ASSERT_EQ("out.d", e2->output);
+  ASSERT_EQ(outd_mtime, e2->mtime);  // most_recent_input < mtime("out.d")
 }
 
 struct BuildLogRecompactTest : public BuildLogTest {
