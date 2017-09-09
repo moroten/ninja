@@ -252,15 +252,36 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
         EXPLAIN("command line changed for %s", output->path().c_str());
         return true;
       }
-      if (most_recent_input && entry->mtime < most_recent_input->mtime()) {
-        // May also be dirty due to the mtime in the log being older than the
-        // mtime of the most recent input.  This can occur even when the mtime
+      if (entry->mtime != output->mtime()) {
+        // May also be dirty due to the mtime in the log differ from the
+        // last recorded build mtime.  This can occur even when the mtime
         // on disk is newer if a previous run wrote to the output file but
-        // exited with an error or was interrupted.
-        EXPLAIN("recorded mtime of %s older than most recent input %s (%" PRId64 " vs %" PRId64 ")",
-                output->path().c_str(), most_recent_input->path().c_str(),
-                entry->mtime, most_recent_input->mtime());
-        return true;
+        // exited with an error or was interrupted.  It can also be that
+        // the user has manually edited the file, e.g. accidentally
+        // forgetting it is a generated code file.
+        if (most_recent_input && edge->GetBindingBool("restat")) {
+          // Restat rules may record the most recent input mtime instead of
+          // the output mtime.
+          if (output->mtime() > entry->mtime) {
+            EXPLAIN("output %s has been modified since last build (%" PRId64 " vs %" PRId64 ")",
+                    output->path().c_str(),
+                    output->mtime(), entry->mtime);
+            return true;
+          }
+          // Already checked for entry < most_recent_input while hasing above.
+          if (entry->mtime > most_recent_input->mtime()) {
+            EXPLAIN("recorded mtime of %s differs from last build and most "
+                    "recent input %s (%" PRId64 " vs %" PRId64 " or %" PRId64 ")",
+                    output->path().c_str(), most_recent_input->path().c_str(),
+                    entry->mtime, output->mtime(), most_recent_input->mtime());
+            return true;
+          }
+        } else {
+          EXPLAIN("recorded mtime of %s differs from last build (%" PRId64 " vs %" PRId64 ")",
+                  output->path().c_str(),
+                  entry->mtime, output->mtime());
+          return true;
+        }
       }
     }
     if (!entry && !generator) {
