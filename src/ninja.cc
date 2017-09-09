@@ -250,12 +250,13 @@ bool NinjaMain::RebuildManifest(const char* input_file, string* err) {
   if (builder.AlreadyUpToDate())
     return false;  // Not an error, but we didn't rebuild.
 
+  TimeStamp old_mtime = node->mtime();
   if (!builder.Build(err))
     return false;
 
-  // The manifest was only rebuilt if it is now dirty (it may have been cleaned
-  // by a restat).
-  if (!node->dirty()) {
+  // The manifest was only rebuilt if it was updated.
+  TimeStamp new_mtime = node->mtime();
+  if (new_mtime == old_mtime) {
     // Reset the state to prevent problems like
     // https://github.com/ninja-build/ninja/issues/874
     state_.Reset();

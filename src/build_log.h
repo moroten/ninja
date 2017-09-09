@@ -45,7 +45,7 @@ struct BuildLog {
 
   bool OpenForWrite(const string& path, const BuildLogUser& user, string* err);
   bool RecordCommand(Edge* edge, int start_time, int end_time,
-                     TimeStamp mtime = 0);
+                     TimeStamp most_recent_input_mtime = 0);
   void Close();
 
   /// Load the on-disk log.
