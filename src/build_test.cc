@@ -561,6 +561,17 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
          out != edge->outputs_.end(); ++out) {
       fs_->Create((*out)->path(), "");
     }
+  } else if (edge->rule().name() == "create") {
+    for (vector<Node*>::iterator out = edge->outputs_.begin();
+         out != edge->outputs_.end(); ++out) {
+      string err;
+      if (fs_->Stat((*out)->path(), &err) == 0)
+        fs_->Create((*out)->path(), "");
+      if (!err.empty()) {
+        printf("stat error: %s\n", err.c_str());
+        return false;
+      }
+    }
   } else if (edge->rule().name() == "true" ||
              edge->rule().name() == "fail" ||
              edge->rule().name() == "interrupt" ||
@@ -1326,14 +1337,14 @@ TEST_F(BuildWithLogTest, RebuildWithNoInputs) {
 
 TEST_F(BuildWithLogTest, RestatTest) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-"rule true\n"
-"  command = true\n"
+"rule create\n"
+"  command = create\n"
 "  restat = 1\n"
 "rule cc\n"
 "  command = cc\n"
 "  restat = 1\n"
 "build out1: cc in\n"
-"build out2: true out1\n"
+"build out2: create out1\n"
 "build out3: cat out2\n"));
 
   fs_.Create("out1", "");
@@ -1391,10 +1402,10 @@ TEST_F(BuildWithLogTest, RestatTest) {
 
 TEST_F(BuildWithLogTest, RebuildAfterRestatOutputChanged) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-"rule true\n"
-"  command = true\n"
+"rule create\n"
+"  command = create\n"
 "  restat = 1\n"
-"build out1: true in\n"));
+"build out1: create in\n"));
 
   fs_.Create("out1", "");
   fs_.Tick();
@@ -1471,12 +1482,12 @@ TEST_F(BuildWithLogTest, RestatMissingFile) {
 
 TEST_F(BuildWithLogTest, RestatSingleDependentOutputDirty) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-    "rule true\n"
-    "  command = true\n"
+    "rule create\n"
+    "  command = create\n"
     "  restat = 1\n"
     "rule touch\n"
     "  command = touch\n"
-    "build out1: true in\n"
+    "build out1: create in\n"
     "build out2 out3: touch out1\n"
     "build out4: touch out2\n"
     ));
@@ -1513,13 +1524,13 @@ TEST_F(BuildWithLogTest, RestatSingleDependentOutputDirty) {
 // https://github.com/ninja-build/ninja/issues/295
 TEST_F(BuildWithLogTest, RestatMissingInput) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-    "rule true\n"
-    "  command = true\n"
+    "rule create\n"
+    "  command = create\n"
     "  depfile = $out.d\n"
     "  restat = 1\n"
     "rule cc\n"
     "  command = cc\n"
-    "build out1: true in\n"
+    "build out1: create in\n"
     "build out2: cc out1\n"));
 
   // Create all necessary files
@@ -1571,14 +1582,14 @@ struct BuildDryRun : public BuildWithLogTest {
 
 TEST_F(BuildDryRun, AllCommandsShown) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-"rule true\n"
-"  command = true\n"
+"rule create\n"
+"  command = create\n"
 "  restat = 1\n"
 "rule cc\n"
 "  command = cc\n"
 "  restat = 1\n"
 "build out1: cc in\n"
-"build out2: true out1\n"
+"build out2: create out1\n"
 "build out3: cat out2\n"));
 
   fs_.Create("out1", "");
@@ -2359,10 +2370,10 @@ TEST_F(BuildWithDepsLogTest, DepsIgnoredInDryRun) {
 /// Check that a restat rule generating a header cancels compilations correctly.
 TEST_F(BuildTest, RestatDepfileDependency) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
-"rule true\n"
-"  command = true\n"  // Would be "write if out-of-date" in reality.
+"rule create\n"
+"  command = create\n"  // Would be "write if out-of-date" in reality.
 "  restat = 1\n"
-"build header.h: true header.in\n"
+"build header.h: create header.in\n"
 "build out: cat in1\n"
 "  depfile = in1.d\n"));
 
@@ -2384,10 +2395,10 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
   string err;
   // Note: in1 was created by the superclass SetUp().
   const char* manifest =
-      "rule true\n"
-      "  command = true\n"  // Would be "write if out-of-date" in reality.
+      "rule create\n"
+      "  command = create\n"  // Would be "write if out-of-date" in reality.
       "  restat = 1\n"
-      "build header.h: true header.in\n"
+      "build header.h: create header.in\n"
       "build out: cat in1 || header.h\n"
       "  deps = gcc\n"
       "  depfile = in1.d\n";
@@ -2576,10 +2587,10 @@ TEST_F(BuildWithDepsLogTest, DepFileDepsLogCanonicalize) {
 /// Follows from: https://github.com/ninja-build/ninja/issues/603
 TEST_F(BuildTest, RestatMissingDepfile) {
 const char* manifest =
-"rule true\n"
-"  command = true\n"  // Would be "write if out-of-date" in reality.
+"rule create\n"
+"  command = create\n"  // Would be "write if out-of-date" in reality.
 "  restat = 1\n"
-"build header.h: true header.in\n"
+"build header.h: create header.in\n"
 "build out: cat header.h\n"
 "  depfile = out.d\n";
 
@@ -2601,10 +2612,10 @@ const char* manifest =
 TEST_F(BuildWithDepsLogTest, RestatMissingDepfileDepslog) {
   string err;
   const char* manifest =
-"rule true\n"
-"  command = true\n"  // Would be "write if out-of-date" in reality.
+"rule create\n"
+"  command = create\n"  // Would be "write if out-of-date" in reality.
 "  restat = 1\n"
-"build header.h: true header.in\n"
+"build header.h: create header.in\n"
 "build out: cat header.h\n"
 "  deps = gcc\n"
 "  depfile = out.d\n";
