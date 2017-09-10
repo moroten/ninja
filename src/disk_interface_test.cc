@@ -21,6 +21,7 @@
 
 #include "disk_interface.h"
 #include "graph.h"
+#include "murmur_hash.h"
 #include "test.h"
 
 namespace {

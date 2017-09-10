@@ -28,8 +28,8 @@
 #include <direct.h>  // _mkdir
 #endif
 
-#include "hash_map.h"
 #include "metrics.h"
+#include "murmur_hash.h"
 #include "util.h"
 
 namespace {
