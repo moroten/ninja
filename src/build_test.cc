@@ -2868,6 +2868,49 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   EXPECT_TRUE(builder_.AlreadyUpToDate());
 }
 
+TEST_F(BuildWithLogTest, HashLogWithPhony) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cc\n"
+"  command = cc\n"
+"  hash_input = 1\n"
+"build out1: cc in | in1 in2\n"));
+
+  fs_.Create("out1", "1");
+
+  fs_.Tick();
+  fs_.Create("in", "");
+  fs_.Create("in1", "");
+  fs_.Create("in2", "");
+
+  // Do a pre-build so that there's commands in the log for the outputs,
+  // otherwise, the lack of an entry in the build log will cause out3 to rebuild
+  // regardless of restat.
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+  state_ = State();
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cc\n"
+"  command = cc\n"
+"  hash_input = 1\n"
+"build group-x: phony in1\n"
+"build group-y: phony in2 group-x\n"
+"build out1: cc in | group-y in2\n"));
+
+  // No semantical change, should be a no-op
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.ResetHashLog();
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_FALSE(builder_.HashLogUsed());
+}
+
 TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
   const char manifest[] =
 "rule cc\n"

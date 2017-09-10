@@ -147,11 +147,6 @@ bool HashLog::UpdateHash(Node* node, const hash_variant variant,
     return false;
   }
 
-  // early exit for non-existing files
-  if (!node->exists()) {
-    return false;
-  }
-
   // check whether we need to update the hash
 
   // first, do we have an old hash? and has the modification time changed
@@ -169,14 +164,29 @@ bool HashLog::UpdateHash(Node* node, const hash_variant variant,
   const string& path = node->path();
 
   // based on the decision, create the hash and persist it
-  if (force || mtime_changed) {
-    const hash_t hash = disk_interface_->HashFile(path, err);
-    if (!err->empty()) {
-      return false;
+  if (node->exists()) {
+    if (force || mtime_changed) {
+      const hash_t hash = disk_interface_->HashFile(path, err);
+      if (!err->empty()) {
+        return false;
+      }
+      if (PutHash(path, hash, node->mtime(), variant, err)) {
+        if (result) { *result = hash; }
+        return true;
+      }
     }
-    if (PutHash(path, hash, node->mtime(), variant, err)) {
-      if (result) { *result = hash; }
-      return true;
+  } else {
+    // If node is produced by a phony edge, check the inputs of that edge.
+    if (node->in_edge() && node->in_edge()->is_phony()) {
+      hash_t hash;
+      EdgeFinished(node->in_edge(), vector<Node*>(), &hash, err);
+      if (!err->empty()) {
+        return true;
+      }
+      if (PutHash(path, hash, node->mtime(), variant, err)) {
+        if (result) { *result = hash; }
+        return true;
+      }
     }
   }
   return false;
@@ -222,21 +232,41 @@ bool HashLog::HashChanged(Node* node, const hash_variant variant, string* err) {
 
   // no hash in our hash log means we consider the hash changed
   if (it == hash_map_.end()) {
-    changed_files_[node] = true;
     result = true;
   }
 
   // we only check the hash if the mtime of the file changed
   // since we last computed the hash
-  if (!result && it->second.mtime_ != node->mtime()) {
-    hash_t current_hash = disk_interface_->HashFile(path, err);
-    if (!err->empty()) {
-      return true;
-    }
-    result = it->second.hash_ != current_hash;
-    PutHash(path, current_hash, node->mtime(), variant, err);
-    if (!err->empty()) {
-      return true;
+  if (!result) {
+    if (node->exists()) {
+      if (it->second.mtime_ != node->mtime()) {
+        hash_t current_hash = disk_interface_->HashFile(path, err);
+        if (!err->empty()) {
+          return true;
+        }
+        result = it->second.hash_ != current_hash;
+        PutHash(path, current_hash, node->mtime(), variant, err);
+        if (!err->empty()) {
+          return true;
+        }
+      }
+    } else {
+      // If node is produced by a phony edge, check the inputs of that edge.
+      if (node->in_edge() && node->in_edge()->is_phony()) {
+        hash_t current_hash;
+        result = EdgeChanged(node->in_edge(), &current_hash, err);
+        if (!err->empty()) {
+          return true;
+        }
+        if (!result) {  // If not changed, put the hash.
+          // Use the Node definition of mtime:
+          // 0:  we looked, and file doesn't exist
+          PutHash(path, current_hash, 0, variant, err);
+          if (!err->empty()) {
+            return true;
+          }
+        }
+      }
     }
   }
   changed_files_[node] = result;
@@ -244,6 +274,11 @@ bool HashLog::HashChanged(Node* node, const hash_variant variant, string* err) {
 }
 
 bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
+  hash_t target;
+  return EdgeChanged(edge, &target, err);
+}
+
+bool HashLog::EdgeChanged(const Edge* edge, hash_t *target, std::string* err) {
   // if the edge has no (non order only) deps or no outputs,
   // we cannot decide and exit early
   if (edge->inputs_.size() - edge->order_only_deps_ == 0
@@ -251,7 +286,7 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
      return true;
   }
 
-  hash_t target = 0;
+  *target = 0;
 
   // Only use each input once and make sure to be order independent.
   // Create inputs = unique(deps_nodes + edge->inputs_without_order_only).
@@ -270,7 +305,7 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
     if (HashChanged(*i, SOURCE, err)) {
       return true;
     }
-    target += GetHash(*i, SOURCE, err);
+    *target += GetHash(*i, SOURCE, err);
     if (!err->empty()) {
       return true; // in case of any errors we exit early and delegate the
                    // error handling (true === edge changed)
@@ -281,17 +316,19 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
   // (even though all the inputs are unchanged, we still might have the case
   // that our Edge has not been built in the last run, hence updated files did
   // not influence any output of our build and therefore are subject to rebuild)
-  for (vector<Node*>::const_iterator i = edge->outputs_.begin();
-       i != edge->outputs_.end(); ++i) {
-    key_t key(TARGET, (*i)->path());
-    map_t::const_iterator it = hash_map_.find(key);
-    if (!(*i)->StatIfNecessary(disk_interface_, err)) {
-      return false;
-    }
-    if (it == hash_map_.end()
-     || it->second.hash_ != target
-     || it->second.mtime_ != (*i)->mtime()) {
-      return true;
+  if (!edge->is_phony()) {
+    for (vector<Node*>::const_iterator i = edge->outputs_.begin();
+        i != edge->outputs_.end(); ++i) {
+      key_t key(TARGET, (*i)->path());
+      map_t::const_iterator it = hash_map_.find(key);
+      if (!(*i)->StatIfNecessary(disk_interface_, err)) {
+        return false;
+      }
+      if (it == hash_map_.end()
+      || it->second.hash_ != *target
+      || it->second.mtime_ != (*i)->mtime()) {
+        return true;
+      }
     }
   }
 
@@ -300,8 +337,14 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
 
 void HashLog::EdgeFinished(const Edge *edge, const vector<Node*> &deps_nodes,
                            std::string* err) {
-  hash_t temp_hash = 0;
-  hash_t target = 0;
+  hash_t target;
+  EdgeFinished(edge, deps_nodes, &target, err);
+}
+
+void HashLog::EdgeFinished(const Edge *edge, const vector<Node*> &deps_nodes,
+                           hash_t *target, std::string* err) {
+  hash_t temp_hash;
+  *target = 0;
 
   // Only use each input once and make sure to be order independent.
   // Create inputs = unique(deps_nodes + edge->inputs_without_order_only).
@@ -323,14 +366,14 @@ void HashLog::EdgeFinished(const Edge *edge, const vector<Node*> &deps_nodes,
       *err = "Error updating hash log: " + *err;
       return;
     }
-    target += temp_hash;
+    *target += temp_hash;
   }
   for (vector<Node*>::const_iterator i = edge->outputs_.begin();
        i != edge->outputs_.end(); ++i) {
     TimeStamp mtime = disk_interface_->Stat((*i)->path(), err);
     if (mtime < 0)
       return;
-    PutHash((*i)->path(), target, mtime, TARGET, err);
+    PutHash((*i)->path(), *target, mtime, TARGET, err);
     if (!err->empty()) {
       *err = "Error updating hash log: " + *err;
       return;
