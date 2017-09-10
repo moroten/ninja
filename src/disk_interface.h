@@ -63,7 +63,7 @@ struct DiskInterface: public FileReader {
   virtual int RemoveFile(const string& path) = 0;
 
   /// the hash type returned for HashFile()
-  typedef unsigned int hash_t;
+  typedef uint64_t hash_t;
   /// Hash a file's content
   hash_t HashFile(const string&, string* err);
 

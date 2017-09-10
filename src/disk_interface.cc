@@ -153,7 +153,7 @@ DiskInterface::hash_t DiskInterface::HashFile(const string& path, string* err) {
   case DiskInterface::NotFound:
     err->clear();
   case DiskInterface::Okay:
-    return MurmurHash2(content.c_str(), content.size());
+    return MurmurHash64A(content.c_str(), content.size());
   default:
     return 0;
   }

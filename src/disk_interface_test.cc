@@ -206,7 +206,7 @@ TEST_F(DiskInterfaceTest, HashFile) {
   const char kTestCont[] = "test-content";
   string err;
   ASSERT_TRUE(disk_.WriteFile(kFileName, kTestCont));
-  ASSERT_EQ(disk_.HashFile(kFileName, &err), MurmurHash2(kTestCont, 12));
+  ASSERT_EQ(disk_.HashFile(kFileName, &err), MurmurHash64A(kTestCont, 12));
   ASSERT_TRUE(err.empty());
 }
 
