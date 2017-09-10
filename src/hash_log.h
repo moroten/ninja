@@ -122,7 +122,8 @@ struct HashLog {
   /// persist hashes (source and target) for a finished edge
   ///
   /// sets *err in case of any errors
-  void   EdgeFinished(const Edge* edge, std::string* err);
+  void   EdgeFinished(const Edge* edge, const vector<Node*> &deps_nodes,
+                      std::string* err);
 
   /// recompact the hash log to reduce it to minimum size
   ///

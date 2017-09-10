@@ -2868,6 +2868,104 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   EXPECT_TRUE(builder_.AlreadyUpToDate());
 }
 
+TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
+  const char manifest[] =
+"rule cc\n"
+"  command = cc\n"
+"  hash_input = 1\n"
+"  deps = gcc\n"
+"  depfile = in.d\n"
+"build out1: cc in | in1\n";
+
+  const char manifest_slim[] =
+"rule cc\n"
+"  command = cc\n"
+"  hash_input = 1\n"
+"build out1: cc in | in2 in1\n";
+
+  fs_.Create("out1", "1");
+
+  fs_.Tick();
+  fs_.Create("in", "");
+  fs_.Create("in1", "");
+  fs_.Create("in2", "");
+  fs_.Create("in.d", "out1: in2 in in1");
+
+  string err;
+
+  // Do a pre-build so that there's commands in the log for the outputs,
+  // otherwise, the lack of an entry in the build log will cause out1 to rebuild
+  // regardless of restat.
+  {
+    State state;
+    ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
+    ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
+
+    DepsLog deps_log;
+    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_EQ("", err);
+
+    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    builder.command_runner_.reset(&command_runner_);
+    EXPECT_TRUE(builder.AddTarget("out1", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ("", err);
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+    deps_log.Close();
+    builder.command_runner_.release();
+  }
+
+  fs_.Tick();
+  fs_.Create("in", "");
+
+  // No content change, should be a no-op
+  {
+    State state;
+    ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
+    ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
+
+    DepsLog deps_log;
+    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+
+    command_runner_.commands_ran_.clear();
+    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    builder.command_runner_.reset(&command_runner_);
+    EXPECT_TRUE(builder.AddTarget("out1", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.AlreadyUpToDate());
+    EXPECT_TRUE(builder.HashLogUsed());
+    deps_log.Close();
+    builder.command_runner_.release();
+  }
+
+  fs_.Tick();
+  fs_.Create("in", "");
+
+  // Changing the order of dependencies, but keeping the order on the command
+  // line should not lead to a no-op. manifest_slim instead of manifest.
+  {
+    State state;
+    ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
+    ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest_slim));
+
+    DepsLog deps_log;
+    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+
+    command_runner_.commands_ran_.clear();
+    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    builder.command_runner_.reset(&command_runner_);
+    EXPECT_TRUE(builder.AddTarget("out1", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.AlreadyUpToDate());
+    EXPECT_TRUE(builder.HashLogUsed());
+    deps_log.Close();
+    builder.command_runner_.release();
+  }
+}
+
 TEST_F(BuildTest, Console) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule console\n"

@@ -252,10 +252,21 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
   }
 
   hash_t target = 0;
+
+  // Only use each input once and make sure to be order independent.
+  // Create inputs = unique(deps_nodes + edge->inputs_without_order_only).
+  // Note that Node pointers points to unique paths and the hashing below
+  // use +=, so extracting unique Node pointers, instead of paths strings,
+  // is enough. See also State::GetNode().
+  vector<Node*> inputs(edge->inputs_.begin(),
+                       edge->inputs_.end() - edge->order_only_deps_);
+  sort(inputs.begin(), inputs.end());
+  inputs.resize(unique(inputs.begin(), inputs.end()) - inputs.begin());
+
   // we check first if any of the inputs have changed since we
   // ran last time. if so, we can exit early at this point already.
-  for (vector<Node*>::const_iterator i = edge->inputs_.begin();
-     i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
+  for (vector<Node*>::const_iterator i = inputs.begin();
+     i != inputs.end(); ++i) {
     if (HashChanged(*i, SOURCE, err)) {
       return true;
     }
@@ -287,11 +298,26 @@ bool HashLog::EdgeChanged(const Edge* edge, std::string* err) {
   return false;
 }
 
-void HashLog::EdgeFinished(const Edge *edge, std::string* err) {
+void HashLog::EdgeFinished(const Edge *edge, const vector<Node*> &deps_nodes,
+                           std::string* err) {
   hash_t temp_hash = 0;
   hash_t target = 0;
-  for (vector<Node*>::const_iterator i = edge->inputs_.begin();
-       i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
+
+  // Only use each input once and make sure to be order independent.
+  // Create inputs = unique(deps_nodes + edge->inputs_without_order_only).
+  // Note that Node pointers points to unique paths and the hashing below
+  // use +=, so extracting unique Node pointers, instead of path strings,
+  // is enough. See also State::GetNode().
+  vector<Node*> inputs(deps_nodes.size() +
+                       edge->inputs_.size() - edge->order_only_deps_);
+  copy(deps_nodes.begin(), deps_nodes.end(), inputs.begin());
+  copy(edge->inputs_.begin(), edge->inputs_.end() - edge->order_only_deps_,
+       inputs.begin() + deps_nodes.size());
+  sort(inputs.begin(), inputs.end());
+  inputs.resize(unique(inputs.begin(), inputs.end()) - inputs.begin());
+
+  for (vector<Node*>::const_iterator i = inputs.begin();
+       i != inputs.end(); ++i) {
     UpdateHash(*i, SOURCE, err, false, &temp_hash);
     if (!err->empty()) {
       *err = "Error updating hash log: " + *err;
