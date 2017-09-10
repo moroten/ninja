@@ -288,7 +288,9 @@ void BuildStatus::PrintStatus(Edge* edge, EdgeStatus status) {
                  force_full_command ? LinePrinter::FULL : LinePrinter::ELIDE);
 }
 
-Plan::Plan() : command_edges_(0), wanted_edges_(0) {}
+Plan::Plan(DependencyScan* scan)
+    : scan_(scan), command_edges_(0), wanted_edges_(0) {
+}
 
 void Plan::Reset() {
   command_edges_ = 0;
@@ -319,14 +321,14 @@ bool Plan::AddSubTarget(Node* node, Node* dependent, string* err) {
 
   // If an entry in want_ does not already exist for edge, create an entry which
   // maps to false, indicating that we do not want to build this entry itself.
-  pair<map<Edge*, bool>::iterator, bool> want_ins =
-    want_.insert(make_pair(edge, false));
-  bool& want = want_ins.first->second;
+  pair<map<Edge*, WantState>::iterator, bool> want_ins =
+    want_.insert(make_pair(edge, kWantDependents));
+  WantState& want = want_ins.first->second;
 
   // If we do need to build edge and we haven't already marked it as wanted,
   // mark it now.
-  if (node->dirty() && !want) {
-    want = true;
+  if (node->dirty() && want == kWantDependents) {
+    want = kDirectlyWanted;
     ++wanted_edges_;
     if (edge->AllInputsReady()) {
       if (!ScheduleWork(edge, err))
@@ -358,30 +360,21 @@ Edge* Plan::FindWork() {
 }
 
 bool Plan::ScheduleWork(Edge* edge, string* err) {
-  set<Edge*>::iterator e = ready_.lower_bound(edge);
-  if (e != ready_.end() && !ready_.key_comp()(edge, *e)) {
-    // This edge has already been scheduled.  We can get here again if an edge
-    // and one of its dependencies share an order-only input, or if a node
-    // duplicates an out edge (see https://github.com/ninja-build/ninja/pull/519).
-    // Avoid scheduling the work again.
-    return true;
-  }
-
   Pool* pool = edge->pool();
   if (pool->ShouldDelayEdge()) {
     pool->DelayEdge(edge);
     pool->RetrieveReadyEdges(&ready_);
   } else {
     pool->EdgeScheduled(*edge);
-    ready_.insert(e, edge);
+    ready_.insert(edge);
   }
   return true;
 }
 
 bool Plan::EdgeFinished(Edge* edge, EdgeResult result, string* err) {
-  map<Edge*, bool>::iterator e = want_.find(edge);
+  map<Edge*, WantState>::iterator e = want_.find(edge);
   assert(e != want_.end());
-  bool directly_wanted = e->second;
+  bool directly_wanted = (e->second != kWantDependents);
 
   // See if this job frees up any delayed jobs.
   if (directly_wanted)
@@ -389,17 +382,44 @@ bool Plan::EdgeFinished(Edge* edge, EdgeResult result, string* err) {
   edge->pool()->RetrieveReadyEdges(&ready_);
 
   // The rest of this function only applies to successful commands.
-  if (result != kEdgeSucceeded)
+  if (result == kEdgeFailed)
     return true;
 
-  if (directly_wanted)
+  if (directly_wanted) {
     --wanted_edges_;
+    if (!edge->is_phony() && result == kEdgeSkipped)
+      --command_edges_;
+  }
   want_.erase(e);
   edge->outputs_ready_ = true;
 
-  // Check off any nodes we were waiting for with this edge.
+  bool clean_all_outputs;
+  if (edge->is_phony()) {
+    // Phony rules are just grouping the inputs, so check if any input was
+    // dirty.
+    clean_all_outputs = true;
+    for (vector<Node*>::iterator i = edge->inputs_.begin();
+         i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
+      if ((*i)->dirty()) {
+        clean_all_outputs = false;
+        break;
+      }
+    }
+  } else {
+    // If skipped, e.g. due to restat, all nodes should be seen as cleaned,
+    // even if they do not exist, because if they are not clean, the edge
+    // should never been skipped in the first place.
+    clean_all_outputs = (result == kEdgeSkipped);
+  }
   for (vector<Node*>::iterator o = edge->outputs_.begin();
        o != edge->outputs_.end(); ++o) {
+    if (clean_all_outputs || (*o)->exists())
+      (*o)->set_dirty(false);
+  }
+
+  // Check off any nodes we were waiting for with this edge.
+  for (vector<Node*>::iterator o = edge->outputs_.begin();
+        o != edge->outputs_.end(); ++o) {
     if (!NodeFinished(*o, err))
       return false;
   }
@@ -410,19 +430,30 @@ bool Plan::NodeFinished(Node* node, string* err) {
   // See if we we want any edges from this node.
   for (vector<Edge*>::const_iterator oe = node->out_edges().begin();
        oe != node->out_edges().end(); ++oe) {
-    map<Edge*, bool>::iterator want_e = want_.find(*oe);
-    if (want_e == want_.end())
+    map<Edge*, WantState>::iterator want_e = want_.find(*oe);
+    if (want_e == want_.end() || want_e->second == kScheduled)
       continue;
 
     // See if the edge is now ready.
     if ((*oe)->AllInputsReady()) {
-      if (want_e->second) {
+      bool schedule_edge = false;
+      if (want_e->second == kDirectlyWanted) {
+        bool edge_dirty;
+        // Now when ready, check if *oe is really needed.
+        if (!RecomputeEdgeDirty(*oe, &edge_dirty, err))
+          return false;
+        if (edge_dirty)
+          schedule_edge = true;
+      }
+
+      if (schedule_edge) {
         if (!ScheduleWork(*oe, err))
           return false;
+        want_e->second = kScheduled;
       } else {
         // We do not need to build this edge, but we might need to build one of
         // its dependents.
-        if (!EdgeFinished(*oe, kEdgeSucceeded, err))
+        if (!EdgeFinished(*oe, kEdgeSkipped, err))
           return false;
       }
     }
@@ -430,72 +461,33 @@ bool Plan::NodeFinished(Node* node, string* err) {
   return true;
 }
 
-bool Plan::NodeWanted(Node* node) {
-  for (vector<Edge*>::const_iterator oe = node->out_edges().begin();
-       oe != node->out_edges().end(); ++oe) {
-    map<Edge*, bool>::iterator want_e = want_.find(*oe);
-    if (want_e != want_.end() && want_e->second)
-      return true;
+bool Plan::RecomputeEdgeDirty(Edge* edge, bool* edge_dirty, string* err) {
+  if (edge->deps_missing_) {
+    *edge_dirty = true;
+    return true;
   }
-  return false;
-}
-
-bool Plan::CleanNode(DependencyScan* scan, Node* node, string* err) {
-  node->set_dirty(false);
-
-  for (vector<Edge*>::const_iterator oe = node->out_edges().begin();
-       oe != node->out_edges().end(); ++oe) {
-    // Don't process edges that we don't actually want.
-    map<Edge*, bool>::iterator want_e = want_.find(*oe);
-    if (want_e == want_.end() || !want_e->second)
-      continue;
-
-    // Don't attempt to clean an edge if it failed to load deps.
-    if ((*oe)->deps_missing_)
-      continue;
-
-    // If all non-order-only inputs for this edge are now clean,
-    // we might have changed the dirty state of the outputs.
-    vector<Node*>::iterator
-        begin = (*oe)->inputs_.begin(),
-        end = (*oe)->inputs_.end() - (*oe)->order_only_deps_;
-    if (find_if(begin, end, mem_fun(&Node::dirty)) == end) {
-      // Recompute most_recent_input.
-      Node* most_recent_input = NULL;
-      for (vector<Node*>::iterator i = begin; i != end; ++i) {
-        if (!most_recent_input || (*i)->mtime() > most_recent_input->mtime())
-          most_recent_input = *i;
-      }
-
-      // Now, this edge is dirty if any of the outputs are dirty.
-      // If the edge isn't dirty, clean the outputs and mark the edge as not
-      // wanted.
-      bool outputs_dirty = false;
-      if (!scan->RecomputeOutputsDirty(*oe, most_recent_input,
-                                       &outputs_dirty, err)) {
-        return false;
-      }
-      if (!outputs_dirty) {
-        for (vector<Node*>::iterator o = (*oe)->outputs_.begin();
-             o != (*oe)->outputs_.end(); ++o) {
-          if (!CleanNode(scan, *o, err))
-            return false;
-        }
-
-        want_e->second = false;
-        --wanted_edges_;
-        if (!(*oe)->is_phony())
-          --command_edges_;
-      }
+  for (vector<Node*>::iterator i = edge->inputs_.begin();
+      i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
+    if ((*i)->dirty()) {
+      *edge_dirty = true;
+      return true;
     }
+  }
+  *edge_dirty = false;
+  if (scan_) {
+    if (!scan_->RecomputeOutputsDirty(edge, edge_dirty, err))
+      return false;
+  } else {
+    // During tests, scan_ may be NULL. Assume outputs are dirty.
+    *edge_dirty = true;
   }
   return true;
 }
 
 void Plan::Dump() {
   printf("pending: %d\n", (int)want_.size());
-  for (map<Edge*, bool>::iterator e = want_.begin(); e != want_.end(); ++e) {
-    if (e->second)
+  for (map<Edge*, WantState>::iterator e = want_.begin(); e != want_.end(); ++e) {
+    if (e->second != kWantDependents)
       printf("want ");
     e->first->Dump();
   }
@@ -568,7 +560,8 @@ bool RealCommandRunner::WaitForCommand(Result* result) {
 Builder::Builder(State* state, const BuildConfig& config,
                  BuildLog* build_log, DepsLog* deps_log,
                  DiskInterface* disk_interface)
-    : state_(state), config_(config), disk_interface_(disk_interface),
+    : state_(state), config_(config), plan_(&scan_),
+      disk_interface_(disk_interface),
       scan_(state, build_log, deps_log, disk_interface) {
   status_ = new BuildStatus(config);
 }
@@ -661,6 +654,9 @@ bool Builder::Build(string* err) {
   // command runner.
   // Second, we attempt to wait for / reap the next finished command.
   while (plan_.more_to_do()) {
+    // Numbers might change when dependent commands are skipped.
+    status_->PlanHasTotalEdges(plan_.command_edge_count());
+
     // See if we can start any more commands.
     if (failures_allowed && command_runner_->CanRunMore()) {
       if (Edge* edge = plan_.FindWork()) {
@@ -792,7 +788,6 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
   // Restat the edge outputs
   TimeStamp restat_mtime = 0;
   bool restat = edge->GetBindingBool("restat");
-  bool hash_input = edge->GetBindingBool("hash_input");
   bool node_untouched = false;
   if (!config_.dry_run && result->success()) {
     for (vector<Node*>::iterator o = edge->outputs_.begin();
@@ -802,7 +797,6 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
         return false;
       TimeStamp new_mtime = (*o)->mtime();
 
-      bool clean_this_node = false;
       if (old_mtime == new_mtime) {
         if (!restat) {
           // If restat is not set, the edge should update its outputs.
@@ -813,26 +807,11 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
           result->status = ExitFailure;
         } else {
           node_untouched = true;
-          clean_this_node = true;
         }
-      } else if (hash_input) {
-        // Even if the output has been updated, it may still have the same
-        // content. Only update the hash_log if the node is actually wanted.
-        // By being restrictive here makes it possible to revert *o to its
-        // previous and actually get the output edges up to date.
-        if (plan_.NodeWanted(*o)) {
-          if (!scan_.hash_log().HashChanged(*o, HashLog::SOURCE, err))
-            clean_this_node = true;
-          if (!err->empty())
-            return false;
-        }
-      }
-      if (clean_this_node) {
         // The rule command did not change the output.  Propagate the clean
         // state through the build graph.
         // Note that this also applies to nonexistent outputs (mtime == 0).
-        if (!plan_.CleanNode(&scan_, *o, err))
-          return false;
+        (*o)->set_dirty(false);
       }
     }
   }

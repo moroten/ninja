@@ -315,7 +315,7 @@ TEST_F(GraphTest, NestedPhonyPrintsDone) {
   EXPECT_TRUE(scan_.RecomputeDirty(GetNode("n2"), &err));
   ASSERT_EQ("", err);
 
-  Plan plan_;
+  Plan plan_(&scan_);
   EXPECT_TRUE(plan_.AddTarget(GetNode("n2"), &err));
   ASSERT_EQ("", err);
 

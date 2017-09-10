@@ -39,7 +39,7 @@ struct State;
 /// Plan stores the state of a build plan: what we intend to build,
 /// which steps we're ready to execute.
 struct Plan {
-  Plan();
+  Plan(DependencyScan* scan);
 
   /// Add a target to our plan (including all its dependencies).
   /// Returns false if we don't need to build this target; may
@@ -50,6 +50,9 @@ struct Plan {
   // Returns NULL if there's no work to do.
   Edge* FindWork();
 
+  /// Checks if an edge still is dirty and should be built.
+  bool RecomputeEdgeDirty(Edge* edge, bool* edge_dirty, string* err);
+
   /// Returns true if there's more work to be done.
   bool more_to_do() const { return wanted_edges_ > 0 && command_edges_ > 0; }
 
@@ -58,14 +61,12 @@ struct Plan {
 
   enum EdgeResult {
     kEdgeFailed,
-    kEdgeSucceeded
+    kEdgeSucceeded,
+    kEdgeSkipped,
   };
 
   /// Mark an edge as done building (whether it succeeded or failed).
   bool EdgeFinished(Edge* edge, EdgeResult result, string* err);
-
-  /// Checks if this node is part of the current build.
-  bool NodeWanted(Node* node);
 
   /// Clean the given node during the build.
   /// Return false on error.
@@ -86,12 +87,19 @@ private:
   /// currently-full pool.
   bool ScheduleWork(Edge* edge, string* err);
 
+  DependencyScan* scan_;
+
+  enum WantState {
+    kWantDependents,
+    kDirectlyWanted,
+    kScheduled,
+  };
   /// Keep track of which edges we want to build in this plan.  If this map does
   /// not contain an entry for an edge, we do not want to build the entry or its
   /// dependents.  If an entry maps to false, we do not want to build it, but we
   /// might want to build one of its dependents.  If the entry maps to true, we
   /// want to build it.
-  map<Edge*, bool> want_;
+  map<Edge*, WantState> want_;
 
   set<Edge*> ready_;
 
@@ -181,6 +189,11 @@ struct Builder {
   /// Used for tests. Should be done between builds to detect file changes.
   void ResetHashLog() {
     scan_.hash_log().Close();
+  }
+
+  /// Used for tests.
+  bool HashLogUsed() {
+    return scan_.hash_log().Used();
   }
 
   State* state_;

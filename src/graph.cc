@@ -180,6 +180,17 @@ bool DependencyScan::VerifyDAG(Node* node, vector<Node*>* stack, string* err) {
   return false;
 }
 
+bool DependencyScan::RecomputeOutputsDirty(Edge* edge, bool* outputs_dirty,
+                                           string* err) {
+  Node* most_recent_input = NULL;
+  vector<Node*>::iterator end = edge->inputs_.end() - edge->order_only_deps_;
+  for (vector<Node*>::iterator i = edge->inputs_.begin(); i != end; ++i) {
+    if (!most_recent_input || (*i)->mtime() > most_recent_input->mtime())
+      most_recent_input = *i;
+  }
+  return RecomputeOutputsDirty(edge, most_recent_input, outputs_dirty, err);
+}
+
 bool DependencyScan::RecomputeOutputsDirty(Edge* edge, Node* most_recent_input,
                                            bool* outputs_dirty, string* err) {
   string command = edge->EvaluateCommand(/*incl_rsp_file=*/true);
@@ -216,6 +227,9 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
     return true;
   }
 
+  bool log_new_most_recent_input = false;
+  bool hash_input = edge->GetBindingBool("hash_input");
+
   // Dirty if the output is older than the input.
   if (most_recent_input && output->mtime() < most_recent_input->mtime()) {
     TimeStamp output_mtime = output->mtime();
@@ -225,7 +239,7 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
     // build log.  Use that mtime instead, so that the file will only be
     // considered dirty if an input was modified since the previous run.
     bool used_restat = false;
-    if (edge->GetBindingBool("restat") && build_log() &&
+    if ((hash_input || edge->GetBindingBool("restat")) && build_log() &&
         (entry = build_log()->LookupByOutput(output->path()))) {
       output_mtime = entry->mtime;
       used_restat = true;
@@ -233,7 +247,7 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
 
     if (output_mtime < most_recent_input->mtime()) {
       bool really_dirty = true;
-      if (edge->GetBindingBool("hash_input")) {
+      if (hash_input) {
         string err;
         really_dirty = hash_log().EdgeChanged(edge, &err);
         if (!err.empty()) {
@@ -252,7 +266,8 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
       } else {
         EXPLAIN("output %s older than most recent input, but hashed "
                 "contents of all inputs are unchanged",
-              output->path().c_str());
+                output->path().c_str());
+        log_new_most_recent_input = true;
       }
     }
   }
@@ -275,7 +290,8 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
         // exited with an error or was interrupted.  It can also be that
         // the user has manually edited the file, e.g. accidentally
         // forgetting it is a generated code file.
-        if (most_recent_input && edge->GetBindingBool("restat")) {
+        if (most_recent_input &&
+            (edge->GetBindingBool("restat") || hash_input)) {
           // Restat rules may record the most recent input mtime instead of
           // the output mtime.
           if (output->mtime() > entry->mtime) {
@@ -303,6 +319,16 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
     if (!entry && !generator) {
       EXPLAIN("command line not found in log for %s", output->path().c_str());
       return true;
+    }
+
+    // Log to avoid checking the hash log the next time.
+    if (log_new_most_recent_input) {
+      if (!build_log()->RecordCommand(edge, 0, 0,
+                                      most_recent_input->mtime())) {
+        string err = string("Error writing to build log: ") +
+                     strerror(errno);
+        Error(err.c_str());  // would be disabled, but we log the error
+      }
     }
   }
 

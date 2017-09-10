@@ -350,12 +350,17 @@ bool HashLog::Recompact(string* err, const bool force) {
 }
 
 bool HashLog::Close() {
+  changed_files_.clear();
   if (file_) {
     fclose(file_);
     file_ = NULL;
     return true;
   }
   return false;
+}
+
+bool HashLog::Used() {
+  return !changed_files_.empty();
 }
 
 bool HashLog::Load(string* err) {

@@ -27,6 +27,8 @@
 struct PlanTest : public StateTestWithBuiltinRules {
   Plan plan_;
 
+  PlanTest() : plan_(NULL) {}
+
   /// Because FindWork does not return Edges in any sort of predictable order,
   // provide a means to get available Edges in order and in a format which is
   // easy to write tests around.
@@ -2770,6 +2772,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.Build(&err));
   ASSERT_EQ(3u, command_runner_.commands_ran_.size());
+  EXPECT_TRUE(builder_.HashLogUsed());
 
   // If we run again, it should be a no-op.
   command_runner_.commands_ran_.clear();
@@ -2778,6 +2781,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_FALSE(builder_.HashLogUsed());
 
   fs_.Tick();
   fs_.Create("in", "A");
@@ -2789,6 +2793,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(builder_.HashLogUsed());
 
   // If we run again, it should be a no-op.
   command_runner_.commands_ran_.clear();
@@ -2797,6 +2802,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_FALSE(builder_.HashLogUsed());
 }
 
 TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {

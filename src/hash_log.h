@@ -134,6 +134,11 @@ struct HashLog {
   /// returns true if the log had to be closed
   bool   Close();
 
+  /// checks if the hash log was actually used during testing
+  ///
+  /// returns true if used
+  bool   Used();
+
  private:
   /// load the hash log
   ///
