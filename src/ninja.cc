@@ -45,6 +45,11 @@
 #include "util.h"
 #include "version.h"
 
+#ifdef _WIN32
+#include "line_printer.h"
+#include "msys2_helper.h"
+#endif  // _WIN32
+
 #ifdef _MSC_VER
 // Defined in msvc_helper_main-win32.cc.
 int MSVCHelperMain(int argc, char** argv);
@@ -1210,7 +1215,7 @@ NORETURN void real_main(int argc, char** argv) {
 
   int exit_code = ReadFlags(&argc, &argv, &options, &config);
   if (exit_code >= 0)
-    exit(exit_code);
+    ninja_exit(exit_code);
 
   if (options.depfile_distinct_target_lines_should_err) {
     config.depfile_parser_options.depfile_distinct_target_lines_action_ =
@@ -1234,7 +1239,7 @@ NORETURN void real_main(int argc, char** argv) {
     // None of the RUN_AFTER_FLAGS actually use a NinjaMain, but it's needed
     // by other tools.
     NinjaMain ninja(ninja_command, config);
-    exit((ninja.*options.tool->func)(&options, argc, argv));
+    ninja_exit((ninja.*options.tool->func)(&options, argc, argv));
   }
 
   // Limit number of rebuilds, to prevent infinite loops.
@@ -1253,44 +1258,75 @@ NORETURN void real_main(int argc, char** argv) {
     string err;
     if (!parser.Load(options.input_file, &err)) {
       Error("%s", err.c_str());
-      exit(1);
+      ninja_exit(1);
     }
 
     if (options.tool && options.tool->when == Tool::RUN_AFTER_LOAD)
-      exit((ninja.*options.tool->func)(&options, argc, argv));
+      ninja_exit((ninja.*options.tool->func)(&options, argc, argv));
 
     if (!ninja.EnsureBuildDirExists())
-      exit(1);
+      ninja_exit(1);
 
     if (!ninja.OpenBuildLog() || !ninja.OpenDepsLog())
-      exit(1);
+      ninja_exit(1);
 
     if (options.tool && options.tool->when == Tool::RUN_AFTER_LOGS)
-      exit((ninja.*options.tool->func)(&options, argc, argv));
+      ninja_exit((ninja.*options.tool->func)(&options, argc, argv));
 
     // Attempt to rebuild the manifest before building anything else
     if (ninja.RebuildManifest(options.input_file, &err)) {
       // In dry_run mode the regeneration will succeed without changing the
       // manifest forever. Better to return immediately.
       if (config.dry_run)
-        exit(0);
+        ninja_exit(0);
       // Start the build over with the new manifest.
       continue;
     } else if (!err.empty()) {
       Error("rebuilding '%s': %s", options.input_file, err.c_str());
-      exit(1);
+      ninja_exit(1);
     }
 
     int result = ninja.RunBuild(argc, argv);
     if (g_metrics)
       ninja.DumpMetrics();
-    exit(result);
+    ninja_exit(result);
   }
 
   Error("manifest '%s' still dirty after %d tries\n",
       options.input_file, kCycleLimit);
-  exit(1);
+  ninja_exit(1);
 }
+
+#ifdef _WIN32
+struct real_main_data_t {
+  int argc;
+  char** argv;
+};
+
+void* real_main_thread_start(void* voidarg) {
+  real_main_data_t* arg = (real_main_data_t*)(voidarg);
+  real_main(arg->argc, arg->argv);
+  return NULL;
+}
+
+void msys2_main(int argc, char** argv) {
+  Msys2Functions &msys2 = Msys2Functions::instance();
+  if (!LinePrinter::IsWindowsConsoleSmart() && msys2.is_available()) {
+    msys2.activate();
+    real_main_data_t thread_data;
+    thread_data.argc = argc;
+    thread_data.argv = argv;
+    pthread_t thread;
+    // Start the thread that runs real_main
+    if (msys2.pthread_create(&thread, NULL, real_main_thread_start, &thread_data))
+      Fatal("pthread_create: %s", msys2.strerror(*msys2.errno_ptr()));
+    // Wait for a signal to occur or for real_main to exit
+    msys2.pthread_join(thread, NULL);
+  } else {
+    real_main(argc, argv);
+  }
+}
+#endif  // _WIN32
 
 }  // anonymous namespace
 
@@ -1302,13 +1338,15 @@ int main(int argc, char** argv) {
   __try {
     // Running inside __try ... __except suppresses any Windows error
     // dialogs for errors such as bad_alloc.
-    real_main(argc, argv);
+    msys2_main(argc, argv);
   }
   __except(ExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
     // Common error situations return exitCode=1. 2 was chosen to
     // indicate a more serious problem.
     return 2;
   }
+#elif defined(_WIN32)
+  msys2_main(argc, argv);
 #else
   real_main(argc, argv);
 #endif

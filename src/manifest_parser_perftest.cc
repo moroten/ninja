@@ -59,7 +59,7 @@ int LoadManifests(bool measure_command_evaluation) {
   ManifestParser parser(&state, &disk_interface);
   if (!parser.Load("build.ninja", &err)) {
     fprintf(stderr, "Failed to read test data: %s\n", err.c_str());
-    exit(1);
+    ninja_exit(1);
   }
   // Doing an empty build involves reading the manifest and evaluating all
   // commands required for the requested targets. So include command

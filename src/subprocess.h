@@ -22,6 +22,7 @@ using namespace std;
 
 #ifdef _WIN32
 #include <windows.h>
+#include "msys2_helper.h"
 #else
 #include <signal.h>
 #endif
@@ -95,6 +96,10 @@ struct SubprocessSet {
 #ifdef _WIN32
   static BOOL WINAPI NotifyInterrupted(DWORD dwCtrlType);
   static HANDLE ioport_;
+  struct sigaction old_int_act_;
+  struct sigaction old_term_act_;
+  struct sigaction old_hup_act_;
+  static void HandleInterruptSignal(int signum);
 #else
   static void SetInterruptedFlag(int signum);
   static void HandlePendingInterruption();
@@ -104,9 +109,6 @@ struct SubprocessSet {
 
   static bool IsInterrupted() { return interrupted_ != 0; }
 
-  struct sigaction old_int_act_;
-  struct sigaction old_term_act_;
-  struct sigaction old_hup_act_;
   sigset_t old_mask_;
 #endif
 };

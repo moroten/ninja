@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "build/browse_py.h"
+#include "util.h"
 
 void RunBrowsePython(State* state, const char* ninja_command,
                      const char* input_file, int argc, char* argv[]) {
@@ -73,6 +74,6 @@ void RunBrowsePython(State* state, const char* ninja_command,
     if (len < (ssize_t)sizeof(kBrowsePy))
       perror("ninja: write");
     close(pipefd[1]);
-    exit(0);
+    ninja_exit(0);
   }
 }

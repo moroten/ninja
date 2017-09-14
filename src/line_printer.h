@@ -33,6 +33,12 @@ struct LinePrinter {
     FULL,
     ELIDE
   };
+
+#ifdef _WIN32
+  /// Checks if the Windows Console is a smart terminal.
+  static bool IsWindowsConsoleSmart();
+#endif  // _WIN32
+
   /// Overprints the current line. If type is ELIDE, elides to_print to fit on
   /// one line.
   void Print(string to_print, LineType type);

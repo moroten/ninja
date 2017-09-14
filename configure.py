@@ -513,7 +513,8 @@ if platform.is_windows():
     for name in ['subprocess-win32',
                  'includes_normalize-win32',
                  'msvc_helper-win32',
-                 'msvc_helper_main-win32']:
+                 'msvc_helper_main-win32',
+                 'msys2_helper']:
         objs += cxx(name, variables=cxxvariables)
     if platform.is_msvc():
         objs += cxx('minidump-win32', variables=cxxvariables)

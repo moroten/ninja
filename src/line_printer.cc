@@ -28,22 +28,31 @@
 #include <sys/time.h>
 #endif
 
+#ifdef _WIN32
+#include "msys2_helper.h"
+#endif
 #include "util.h"
 
 LinePrinter::LinePrinter() : have_blank_line_(true), console_locked_(false) {
-#ifndef _WIN32
-  const char* term = getenv("TERM");
-  smart_terminal_ = isatty(1) && term && string(term) != "dumb";
-#else
+#ifdef _WIN32
   // Disable output buffer.  It'd be nice to use line buffering but
   // MSDN says: "For some systems, [_IOLBF] provides line
   // buffering. However, for Win32, the behavior is the same as _IOFBF
   // - Full Buffering."
   setvbuf(stdout, NULL, _IONBF, 0);
-  console_ = GetStdHandle(STD_OUTPUT_HANDLE);
-  CONSOLE_SCREEN_BUFFER_INFO csbi;
-  smart_terminal_ = GetConsoleScreenBufferInfo(console_, &csbi);
+  const Msys2Functions &msys2 = Msys2Functions::instance();
+  if (!msys2.is_active()) {
+    console_ = GetStdHandle(STD_OUTPUT_HANDLE);
+    smart_terminal_ = IsWindowsConsoleSmart();
+  } else {
+    bool stdout_is_atty = msys2.isatty(1);
+#else
+  {
+    bool stdout_is_atty = isatty(1);
 #endif
+    const char* term = getenv("TERM");
+    smart_terminal_ = stdout_is_atty && term && string(term) != "dumb";
+  }
   supports_color_ = smart_terminal_;
   if (!supports_color_) {
     const char* clicolor_force = getenv("CLICOLOR_FORCE");
@@ -51,7 +60,7 @@ LinePrinter::LinePrinter() : have_blank_line_(true), console_locked_(false) {
   }
 #ifdef _WIN32
   // Try enabling ANSI escape sequence support on Windows 10 terminals.
-  if (supports_color_) {
+  if (!msys2.is_active() && supports_color_) {
     DWORD mode;
     if (GetConsoleMode(console_, &mode)) {
       SetConsoleMode(console_, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
@@ -59,6 +68,15 @@ LinePrinter::LinePrinter() : have_blank_line_(true), console_locked_(false) {
   }
 #endif
 }
+
+#ifdef _WIN32
+bool LinePrinter::IsWindowsConsoleSmart() {
+  HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+  CONSOLE_SCREEN_BUFFER_INFO csbi;
+  bool smart_terminal = GetConsoleScreenBufferInfo(console, &csbi);
+  return smart_terminal;
+}
+#endif  // _WIN32
 
 void LinePrinter::Print(string to_print, LineType type) {
   if (console_locked_) {
@@ -75,37 +93,47 @@ void LinePrinter::Print(string to_print, LineType type) {
 
   if (smart_terminal_ && type == ELIDE) {
 #ifdef _WIN32
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(console_, &csbi);
+    const Msys2Functions &msys2 = Msys2Functions::instance();
+    if (!msys2.is_active()) {
+      CONSOLE_SCREEN_BUFFER_INFO csbi;
+      GetConsoleScreenBufferInfo(console_, &csbi);
 
-    to_print = ElideMiddle(to_print, static_cast<size_t>(csbi.dwSize.X));
-    // We don't want to have the cursor spamming back and forth, so instead of
-    // printf use WriteConsoleOutput which updates the contents of the buffer,
-    // but doesn't move the cursor position.
-    COORD buf_size = { csbi.dwSize.X, 1 };
-    COORD zero_zero = { 0, 0 };
-    SMALL_RECT target = {
-      csbi.dwCursorPosition.X, csbi.dwCursorPosition.Y,
-      static_cast<SHORT>(csbi.dwCursorPosition.X + csbi.dwSize.X - 1),
-      csbi.dwCursorPosition.Y
-    };
-    vector<CHAR_INFO> char_data(csbi.dwSize.X);
-    for (size_t i = 0; i < static_cast<size_t>(csbi.dwSize.X); ++i) {
-      char_data[i].Char.AsciiChar = i < to_print.size() ? to_print[i] : ' ';
-      char_data[i].Attributes = csbi.wAttributes;
-    }
-    WriteConsoleOutput(console_, &char_data[0], buf_size, zero_zero, &target);
-#else
-    // Limit output to width of the terminal if provided so we don't cause
-    // line-wrapping.
-    winsize size;
-    if ((ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) && size.ws_col) {
-      to_print = ElideMiddle(to_print, size.ws_col);
-    }
-    printf("%s", to_print.c_str());
-    printf("\x1B[K");  // Clear to end of line.
-    fflush(stdout);
+      to_print = ElideMiddle(to_print, static_cast<size_t>(csbi.dwSize.X));
+      // We don't want to have the cursor spamming back and forth, so instead of
+      // printf use WriteConsoleOutput which updates the contents of the buffer,
+      // but doesn't move the cursor position.
+      COORD buf_size = { csbi.dwSize.X, 1 };
+      COORD zero_zero = { 0, 0 };
+      SMALL_RECT target = {
+        csbi.dwCursorPosition.X, csbi.dwCursorPosition.Y,
+        static_cast<SHORT>(csbi.dwCursorPosition.X + csbi.dwSize.X - 1),
+        csbi.dwCursorPosition.Y
+      };
+      vector<CHAR_INFO> char_data(csbi.dwSize.X);
+      for (size_t i = 0; i < static_cast<size_t>(csbi.dwSize.X); ++i) {
+        char_data[i].Char.AsciiChar = i < to_print.size() ? to_print[i] : ' ';
+        char_data[i].Attributes = csbi.wAttributes;
+      }
+      WriteConsoleOutput(console_, &char_data[0], buf_size, zero_zero, &target);
+    } else
 #endif
+    {
+#ifdef _WIN32
+#define NINJA_IOCTL msys2.ioctl
+#else
+#define NINJA_IOCTL ioctl
+#endif
+      // Limit output to width of the terminal if provided so we don't cause
+      // line-wrapping.
+      winsize size;
+      if ((NINJA_IOCTL(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) && size.ws_col) {
+        to_print = ElideMiddle(to_print, size.ws_col);
+      }
+      printf("%s", to_print.c_str());
+      printf("\x1B[K");  // Clear to end of line.
+      fflush(stdout);
+#undef NINJA_IOCTL
+    }
 
     have_blank_line_ = false;
   } else {

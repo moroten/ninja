@@ -209,10 +209,48 @@ SubprocessSet::SubprocessSet() {
     Win32Fatal("CreateIoCompletionPort");
   if (!SetConsoleCtrlHandler(NotifyInterrupted, TRUE))
     Win32Fatal("SetConsoleCtrlHandler");
+
+  const Msys2Functions &msys2 = Msys2Functions::instance();
+  if (msys2.is_active()) {
+    struct sigaction act;
+    memset(&act, 0, sizeof(act));
+    act.sa_handler = &HandleInterruptSignal;
+    if (msys2.sigaction(SIGINT, &act, &old_int_act_) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+    if (msys2.sigaction(SIGTERM, &act, &old_term_act_) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+    if (msys2.sigaction(SIGHUP, &act, &old_hup_act_) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+
+    // Make sure all pending signals are handled before relying on the
+    // registered signal handler.
+    sigset_t pending;
+    msys2.sigemptyset(&pending);
+    if (msys2.sigpending(&pending) == -1) {
+      Fatal("sigpending: %s", msys2.strerror(*msys2.errno_ptr()));
+    } else {
+      if (msys2.sigismember(&pending, SIGINT))
+        HandleInterruptSignal(SIGINT);
+      else if (msys2.sigismember(&pending, SIGTERM))
+        HandleInterruptSignal(SIGTERM);
+      else if (msys2.sigismember(&pending, SIGHUP))
+        HandleInterruptSignal(SIGHUP);
+    }
+  }
 }
 
 SubprocessSet::~SubprocessSet() {
   Clear();
+
+  const Msys2Functions &msys2 = Msys2Functions::instance();
+  if (msys2.is_active()) {
+    if (msys2.sigaction(SIGINT, &old_int_act_, 0) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+    if (msys2.sigaction(SIGTERM, &old_term_act_, 0) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+    if (msys2.sigaction(SIGHUP, &old_hup_act_, 0) < 0)
+      Fatal("sigaction: %s", msys2.strerror(*msys2.errno_ptr()));
+  }
 
   SetConsoleCtrlHandler(NotifyInterrupted, FALSE);
   CloseHandle(ioport_);
@@ -226,6 +264,11 @@ BOOL WINAPI SubprocessSet::NotifyInterrupted(DWORD dwCtrlType) {
   }
 
   return FALSE;
+}
+
+void SubprocessSet::HandleInterruptSignal(int signum) {
+  // Just interrupt, that's all we're listening to.
+  NotifyInterrupted(CTRL_BREAK_EVENT);
 }
 
 Subprocess *SubprocessSet::Add(const string& command, bool use_console) {

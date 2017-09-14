@@ -34,6 +34,9 @@ using namespace std;
 /// Log a fatal message and exit.
 NORETURN void Fatal(const char* msg, ...);
 
+/// Executes the right version of exit(), e.g. native or msys2.
+NORETURN void ninja_exit(int status);
+
 // Have a generic fall-through for different versions of C/C++.
 #if defined(__cplusplus) && __cplusplus >= 201703L
 #define NINJA_FALLTHROUGH [[fallthrough]]

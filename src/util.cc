@@ -13,6 +13,9 @@
 // limitations under the License.
 
 #include "util.h"
+#ifdef _WIN32
+#include "msys2_helper.h"
+#endif
 
 #ifdef __CYGWIN__
 #include <windows.h>
@@ -68,8 +71,20 @@ void Fatal(const char* msg, ...) {
   fflush(stdout);
   ExitProcess(1);
 #else
-  exit(1);
+  ninja_exit(1);
 #endif
+}
+
+NORETURN void ninja_exit(int status) {
+#ifdef _WIN32
+  const Msys2Functions msys2 = Msys2Functions::instance();
+  if (msys2.is_active()) {
+    fflush(stderr);
+    fflush(stdout);
+    msys2.exit(status);
+  }
+#endif
+  exit(status);
 }
 
 void Warning(const char* msg, ...) {
