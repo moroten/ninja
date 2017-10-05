@@ -469,6 +469,10 @@ bool Plan::RecomputeEdgeDirty(Edge* edge, bool* edge_dirty, string* err) {
   for (vector<Node*>::iterator i = edge->inputs_.begin();
       i != edge->inputs_.end() - edge->order_only_deps_; ++i) {
     if ((*i)->dirty()) {
+      for (vector<Node*>::iterator o = edge->outputs_.begin();
+          o != edge->outputs_.end(); ++o) {
+        EXPLAIN("%s is dirty because of %s", (*o)->path().c_str(), (*i)->path().c_str());
+      }
       *edge_dirty = true;
       return true;
     }

@@ -101,7 +101,6 @@ bool DependencyScan::RecomputeDirty(Node* node, vector<Node*>* stack,
       // If a regular input is dirty (or missing), we're dirty.
       // Otherwise consider mtime.
       if ((*i)->dirty()) {
-        EXPLAIN("%s is dirty", (*i)->path().c_str());
         dirty = true;
       } else {
         if (!most_recent_input || (*i)->mtime() > most_recent_input->mtime()) {
