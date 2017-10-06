@@ -250,11 +250,11 @@ struct ImplicitDepLoader {
 /// and updating the dirty/outputs_ready state of all the nodes and edges.
 struct DependencyScan {
   DependencyScan(State* state, BuildLog* build_log, DepsLog* deps_log,
-                 DiskInterface* disk_interface)
+                 HashLog* hash_log, DiskInterface* disk_interface)
       : build_log_(build_log),
         disk_interface_(disk_interface),
         dep_loader_(state, deps_log, disk_interface),
-        hash_log_(kHashLogFileName, disk_interface) {}
+        hash_log_(hash_log) {}
 
   /// Update the |dirty_| state of the given node by inspecting its input edge.
   /// Examine inputs, outputs, and command lines to judge whether an edge
@@ -280,8 +280,11 @@ struct DependencyScan {
     return dep_loader_.deps_log();
   }
 
-  HashLog& hash_log() {
+  HashLog* hash_log() {
     return hash_log_;
+  }
+  void set_hash_log(HashLog* log) {
+    hash_log_ = log;
   }
 
  private:
@@ -296,7 +299,7 @@ struct DependencyScan {
   BuildLog* build_log_;
   DiskInterface* disk_interface_;
   ImplicitDepLoader dep_loader_;
-  HashLog hash_log_;
+  HashLog* hash_log_;
 };
 
 #endif  // NINJA_GRAPH_H_

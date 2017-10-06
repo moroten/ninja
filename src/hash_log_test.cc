@@ -41,6 +41,7 @@ void wait(uint32_t millis) {
 
 
 const char kTestFilename[] = "HashLogTest-tempfile";
+const char kTestFilename2[] = "HashLogTest-tempfile2";
 const char kTestInput1[] = "HashLogTest-testinput1";
 const char kTestInput2[] = "HashLogTest-testinput2";
 const char kTestInput3[] = "HashLogTest-testinput3";
@@ -94,6 +95,7 @@ struct HashLogTest : public testing::Test {
   }
   void cleanup() {
     unlink(kTestFilename);
+    unlink(kTestFilename2);
     unlink(kTestInput1);
     unlink(kTestInput2);
     unlink(kTestOutput1);
@@ -399,6 +401,55 @@ TEST_F(HashLogTest, LoadClose) {
   ASSERT_TRUE(log.UpdateHash(node2, HashLog::UNDEFINED, &err));
   ASSERT_TRUE(err.empty());
 
+}
+
+TEST_F(HashLogTest, SetLogPath) {
+  Node* node = state.GetNode(kTestInput1, 0);
+  disk_interface->WriteFile(kTestInput1, "test1");
+  Node* node2 = state.GetNode(kTestInput2, 0);
+  disk_interface->WriteFile(kTestInput2, "test2");
+
+  // should not be in the log (implicitely opening log)
+  ASSERT_EQ(0u, log.GetHash(node, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+
+  // update value1 (should open the log)
+  ASSERT_TRUE(log.UpdateHash(node, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+
+  // open another log
+  ASSERT_TRUE(log.SetLogPathAndLoad(kTestFilename2, &err));
+  ASSERT_TRUE(err.empty());
+
+  // node and node2 should not be in the log
+  ASSERT_EQ(0u, log.GetHash(node, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+  ASSERT_EQ(0u, log.GetHash(node2, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+
+  // update value2
+  ASSERT_TRUE(log.UpdateHash(node2, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+
+  // open original log
+  ASSERT_TRUE(log.SetLogPathAndLoad(kTestFilename, &err));
+  ASSERT_TRUE(err.empty());
+
+  // check that node and not node2 is there
+  ASSERT_NE(0u, log.GetHash(node, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+  ASSERT_EQ(0u, log.GetHash(node2, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+
+  // open the other log
+  ASSERT_TRUE(log.SetLogPathAndLoad(kTestFilename2, &err));
+  ASSERT_TRUE(err.empty());
+
+  // check that node2 and not node is there
+  ASSERT_EQ(0u, log.GetHash(node, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
+  ASSERT_NE(0u, log.GetHash(node2, HashLog::UNDEFINED, &err));
+  ASSERT_TRUE(err.empty());
 }
 
 TEST_F(HashLogTest, Variants) {

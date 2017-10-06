@@ -148,6 +148,11 @@ struct HashLog {
   /// returns true if the log had to be closed
   bool   Close();
 
+  /// use another file for the hash log and load that file
+  ///
+  /// returns true if successfully loaded the new log
+  bool   SetLogPathAndLoad(const std::string& path, std::string* err);
+
   /// checks if the hash log was actually used during testing
   ///
   /// returns true if used
@@ -171,7 +176,7 @@ struct HashLog {
                string* err);
 
   /// the hash log file to persist the log
-  const std::string filename_;
+  std::string filename_;
 
   /// the file object
   FILE* file_;

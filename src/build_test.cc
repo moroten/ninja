@@ -16,10 +16,17 @@
 
 #include <assert.h>
 
+#ifdef _MSC_VER
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "build_log.h"
 #include "deps_log.h"
 #include "graph.h"
 #include "test.h"
+#include "util.h"
 
 /// Fixture for tests involving Plan.
 // Though Plan doesn't use State, it's useful to have one around
@@ -485,7 +492,7 @@ struct FakeCommandRunner : public CommandRunner {
 
 struct BuildTest : public StateTestWithBuiltinRules, public BuildLogUser {
   BuildTest() : config_(MakeConfig()), command_runner_(&fs_),
-                builder_(&state_, config_, NULL, NULL, &fs_),
+                builder_(&state_, config_, NULL, NULL, NULL, &fs_),
                 status_(config_) {
   }
 
@@ -558,7 +565,7 @@ void BuildTest::RebuildTarget(const string& target, const char* manifest,
     pdeps_log = &deps_log;
   }
 
-  Builder builder(pstate, config_, pbuild_log, pdeps_log, &fs_);
+  Builder builder(pstate, config_, pbuild_log, pdeps_log, NULL, &fs_);
   EXPECT_TRUE(builder.AddTarget(target, &err));
 
   command_runner_.commands_ran_.clear();
@@ -1969,7 +1976,7 @@ TEST_F(BuildWithDepsLogTest, Straightforward) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out", &err));
     ASSERT_EQ("", err);
@@ -1999,7 +2006,7 @@ TEST_F(BuildWithDepsLogTest, Straightforward) {
     ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     command_runner_.commands_ran_.clear();
     EXPECT_TRUE(builder.AddTarget("out", &err));
@@ -2041,7 +2048,7 @@ TEST_F(BuildWithDepsLogTest, MoveOutputFromImplicitToExplicit) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("outexp", &err));
     ASSERT_EQ("", err);
@@ -2068,7 +2075,7 @@ TEST_F(BuildWithDepsLogTest, MoveOutputFromImplicitToExplicit) {
     ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     command_runner_.commands_ran_.clear();
     EXPECT_TRUE(builder.AddTarget("outimp", &err));
@@ -2093,7 +2100,7 @@ TEST_F(BuildWithDepsLogTest, MoveOutputFromImplicitToExplicit) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     command_runner_.commands_ran_.clear();
     EXPECT_TRUE(builder.AddTarget("outimp", &err));
@@ -2142,7 +2149,7 @@ TEST_F(BuildWithDepsLogTest, RecordForEachOutput) {
       ASSERT_TRUE(deps_log.OpenForWrite(ninja_deps, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       EXPECT_TRUE(builder.AddTarget("out2", &err));
       ASSERT_EQ("", err);
@@ -2165,7 +2172,7 @@ TEST_F(BuildWithDepsLogTest, RecordForEachOutput) {
       ASSERT_TRUE(deps_log.Load(ninja_deps, &state, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       EXPECT_TRUE(builder.AddTarget("out1", &err));
       ASSERT_EQ("", err);
@@ -2191,7 +2198,7 @@ TEST_F(BuildWithDepsLogTest, RecordForEachOutput) {
       ASSERT_TRUE(deps_log.OpenForWrite(ninja_deps, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       command_runner_.commands_ran_.clear();
       EXPECT_TRUE(builder.AddTarget(i == 0 ? "out1" : "out2", &err));
@@ -2244,7 +2251,7 @@ TEST_F(BuildWithDepsLogTest, DepsFromAllOutputsShouldBeUsed) {
       ASSERT_TRUE(deps_log.OpenForWrite(ninja_deps, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       EXPECT_TRUE(builder.AddTarget("out1", &err));
       ASSERT_EQ("", err);
@@ -2270,7 +2277,7 @@ TEST_F(BuildWithDepsLogTest, DepsFromAllOutputsShouldBeUsed) {
       ASSERT_TRUE(deps_log.Load(ninja_deps, &state, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       EXPECT_TRUE(builder.AddTarget("out1", &err));
       ASSERT_EQ("", err);
@@ -2296,7 +2303,7 @@ TEST_F(BuildWithDepsLogTest, DepsFromAllOutputsShouldBeUsed) {
       ASSERT_TRUE(deps_log.OpenForWrite(ninja_deps, &err));
       ASSERT_EQ("", err);
 
-      Builder builder(&state, config_, NULL, &deps_log, &fs_);
+      Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
       builder.command_runner_.reset(&command_runner_);
       command_runner_.commands_ran_.clear();
       // If in1 was touched, build out2.
@@ -2344,7 +2351,7 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out", &err));
     ASSERT_EQ("", err);
@@ -2373,7 +2380,7 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
     ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     command_runner_.commands_ran_.clear();
     EXPECT_TRUE(builder.AddTarget("out", &err));
@@ -2410,7 +2417,7 @@ TEST_F(BuildWithDepsLogTest, DepsIgnoredInDryRun) {
 
   // The deps log is NULL in dry runs.
   config_.dry_run = true;
-  Builder builder(&state, config_, NULL, NULL, &fs_);
+  Builder builder(&state, config_, NULL, NULL, NULL, &fs_);
   builder.command_runner_.reset(&command_runner_);
   command_runner_.commands_ran_.clear();
 
@@ -2470,7 +2477,7 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out", &err));
     ASSERT_EQ("", err);
@@ -2496,7 +2503,7 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
     ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     command_runner_.commands_ran_.clear();
     EXPECT_TRUE(builder.AddTarget("out", &err));
@@ -2529,7 +2536,7 @@ TEST_F(BuildWithDepsLogTest, DepFileOKDepsLog) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("fo o.o", &err));
     ASSERT_EQ("", err);
@@ -2550,7 +2557,7 @@ TEST_F(BuildWithDepsLogTest, DepFileOKDepsLog) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
 
     Edge* edge = state.edges_.back();
@@ -2591,7 +2598,7 @@ TEST_F(BuildWithDepsLogTest, DepFileDepsLogCanonicalize) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("a/b/c/d/e/fo o.o", &err));
     ASSERT_EQ("", err);
@@ -2614,7 +2621,7 @@ TEST_F(BuildWithDepsLogTest, DepFileDepsLogCanonicalize) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, NULL, &fs_);
     builder.command_runner_.reset(&command_runner_);
 
     Edge* edge = state.edges_.back();
@@ -2735,7 +2742,27 @@ TEST_F(BuildTest, WrongOutputInDepfileCausesRebuild) {
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
 }
 
-TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
+struct BuildWithHashLogTest : public BuildWithLogTest {
+  BuildWithHashLogTest()
+      : BuildWithLogTest()
+      , hash_log_("HashLogTest-tempfile", &fs_) {
+    builder_.SetHashLog(&hash_log_);
+  }
+
+  virtual void SetUp() {
+    BuildTest::SetUp();
+    unlink("HashLogTest-tempfile");
+  }
+
+  virtual void TearDown() {
+    BuildTest::TearDown();
+    unlink("HashLogTest-tempfile");
+  }
+
+  HashLog hash_log_;
+};
+
+TEST_F(BuildWithHashLogTest, HashLogSkipIfSameInputContent) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule cc\n"
 "  command = cc\n"
@@ -2762,7 +2789,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   ASSERT_EQ(3u, command_runner_.commands_ran_.size());
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
 
   fs_.Tick();
   fs_.Create("in", "A");
@@ -2772,16 +2799,16 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.Build(&err));
   ASSERT_EQ(3u, command_runner_.commands_ran_.size());
-  EXPECT_TRUE(builder_.HashLogUsed());
+  EXPECT_TRUE(hash_log_.Used());
 
   // If we run again, it should be a no-op.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
-  EXPECT_FALSE(builder_.HashLogUsed());
+  EXPECT_FALSE(hash_log_.Used());
 
   fs_.Tick();
   fs_.Create("in", "A");
@@ -2789,23 +2816,23 @@ TEST_F(BuildWithLogTest, HashLogSkipIfSameInputContent) {
   // Touching in, but keeping the same content, should not lead to rebuild.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
-  EXPECT_TRUE(builder_.HashLogUsed());
+  EXPECT_TRUE(hash_log_.Used());
 
   // If we run again, it should be a no-op.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
-  EXPECT_FALSE(builder_.HashLogUsed());
+  EXPECT_FALSE(hash_log_.Used());
 }
 
-TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
+TEST_F(BuildWithHashLogTest, HashLogSkipIfGeneratedSameContent) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule cp\n"
 "  command = cp\n"
@@ -2832,7 +2859,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   ASSERT_EQ(3u, command_runner_.commands_ran_.size());
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
 
   fs_.Tick();
   fs_.Create("in", "B");
@@ -2840,7 +2867,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   // Modifying in should rebuild out1.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out1", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.Build(&err));
@@ -2853,7 +2880,7 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   // content as when out2 was built last time, out2 should not be rebuilt.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.Build(&err));
@@ -2862,13 +2889,13 @@ TEST_F(BuildWithLogTest, HashLogSkipIfGeneratedSameContent) {
   // If we run again, it should be a no-op.
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out3", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
 }
 
-TEST_F(BuildWithLogTest, HashLogWithPhony) {
+TEST_F(BuildWithHashLogTest, HashLogWithPhony) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule cc\n"
 "  command = cc\n"
@@ -2904,14 +2931,14 @@ TEST_F(BuildWithLogTest, HashLogWithPhony) {
   // No semantical change, should be a no-op
   command_runner_.commands_ran_.clear();
   state_.Reset();
-  builder_.ResetHashLog();
+  hash_log_.Close();
   EXPECT_TRUE(builder_.AddTarget("out1", &err));
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
-  EXPECT_FALSE(builder_.HashLogUsed());
+  EXPECT_FALSE(hash_log_.Used());
 }
 
-TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
+TEST_F(BuildWithHashLogTest, HashLogInputOrderIndependent) {
   const char manifest[] =
 "rule cc\n"
 "  command = cc\n"
@@ -2948,7 +2975,7 @@ TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
     ASSERT_EQ("", err);
 
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, &hash_log_, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out1", &err));
     ASSERT_EQ("", err);
@@ -2973,12 +3000,12 @@ TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
 
     command_runner_.commands_ran_.clear();
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, &hash_log_, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out1", &err));
     ASSERT_EQ("", err);
     EXPECT_TRUE(builder.AlreadyUpToDate());
-    EXPECT_TRUE(builder.HashLogUsed());
+    EXPECT_TRUE(hash_log_.Used());
     deps_log.Close();
     builder.command_runner_.release();
   }
@@ -2998,12 +3025,12 @@ TEST_F(BuildWithDepsLogTest, HashLogInputOrderIndependent) {
     ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
 
     command_runner_.commands_ran_.clear();
-    Builder builder(&state, config_, NULL, &deps_log, &fs_);
+    Builder builder(&state, config_, NULL, &deps_log, &hash_log_, &fs_);
     builder.command_runner_.reset(&command_runner_);
     EXPECT_TRUE(builder.AddTarget("out1", &err));
     ASSERT_EQ("", err);
     EXPECT_TRUE(builder.AlreadyUpToDate());
-    EXPECT_TRUE(builder.HashLogUsed());
+    EXPECT_TRUE(hash_log_.Used());
     deps_log.Close();
     builder.command_runner_.release();
   }

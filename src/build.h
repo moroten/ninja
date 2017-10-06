@@ -155,7 +155,7 @@ struct BuildConfig {
 /// Builder wraps the build process: starting commands, updating status.
 struct Builder {
   Builder(State* state, const BuildConfig& config,
-          BuildLog* build_log, DepsLog* deps_log,
+          BuildLog* build_log, DepsLog* deps_log, HashLog* hash_log,
           DiskInterface* disk_interface);
   ~Builder();
 
@@ -186,14 +186,9 @@ struct Builder {
     scan_.set_build_log(log);
   }
 
-  /// Used for tests. Should be done between builds to detect file changes.
-  void ResetHashLog() {
-    scan_.hash_log().Close();
-  }
-
   /// Used for tests.
-  bool HashLogUsed() {
-    return scan_.hash_log().Used();
+  void SetHashLog(HashLog* log) {
+    scan_.set_hash_log(log);
   }
 
   State* state_;

@@ -247,9 +247,9 @@ bool DependencyScan::RecomputeOutputDirty(Edge* edge,
 
     if (output_mtime < most_recent_input->mtime()) {
       bool really_dirty = true;
-      if (hash_input) {
+      if (hash_input && hash_log()) {
         string err;
-        really_dirty = hash_log().EdgeChanged(edge, &err);
+        really_dirty = hash_log()->EdgeChanged(edge, &err);
         if (!err.empty()) {
           really_dirty = true; // in case of an error we behave as if hashing
           Error(err.c_str());  // would be disabled, but we log the error

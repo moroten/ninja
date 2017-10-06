@@ -558,11 +558,11 @@ bool RealCommandRunner::WaitForCommand(Result* result) {
 }
 
 Builder::Builder(State* state, const BuildConfig& config,
-                 BuildLog* build_log, DepsLog* deps_log,
+                 BuildLog* build_log, DepsLog* deps_log, HashLog* hash_log,
                  DiskInterface* disk_interface)
     : state_(state), config_(config), plan_(&scan_),
       disk_interface_(disk_interface),
-      scan_(state, build_log, deps_log, disk_interface) {
+      scan_(state, build_log, deps_log, hash_log, disk_interface) {
   status_ = new BuildStatus(config);
 }
 
@@ -855,8 +855,8 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
 
   // if defined for this rule hash all inputs for further comparison
   // in subsequent builds
-  if (edge->GetBindingBool("hash_input") && !config_.dry_run) {
-    scan_.hash_log().EdgeFinished(edge, deps_nodes, err);
+  if (edge->GetBindingBool("hash_input") && !config_.dry_run && scan_.hash_log()) {
+    scan_.hash_log()->EdgeFinished(edge, deps_nodes, err);
     if (!err->empty()) {
         return false; // delegate error handling to caller
     }

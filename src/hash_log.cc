@@ -420,12 +420,20 @@ bool HashLog::Recompact(string* err, const bool force) {
 
 bool HashLog::Close() {
   changed_files_.clear();
+  hash_map_.clear();
   if (file_) {
     fclose(file_);
     file_ = NULL;
     return true;
   }
   return false;
+}
+
+bool HashLog::SetLogPathAndLoad(const std::string& path, string* err) {
+  if (file_ && !Close())
+    return false;
+  filename_ = path;
+  return Load(err);
 }
 
 bool HashLog::Used() {
