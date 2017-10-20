@@ -15,6 +15,8 @@
 #include "build.h"
 
 #include <assert.h>
+#include <set>
+#include <vector>
 
 #ifdef _MSC_VER
 #include <windows.h>
@@ -531,6 +533,8 @@ struct BuildTest : public StateTestWithBuiltinRules, public BuildLogUser {
     return config;
   }
 
+  void TestDepFileOK(bool includeCFile);
+
   BuildConfig config_;
   FakeCommandRunner command_runner_;
   VirtualFileSystem fs_;
@@ -895,7 +899,7 @@ TEST_F(BuildTest, DepFileMissing) {
   EXPECT_EQ("fo o.o.d", fs_.files_read_[0]);
 }
 
-TEST_F(BuildTest, DepFileOK) {
+void BuildTest::TestDepFileOK(bool includeCFile) {
   string err;
   int orig_edges = state_.edges_.size();
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
@@ -905,7 +909,11 @@ TEST_F(BuildTest, DepFileOK) {
 
   fs_.Create("foo.c", "");
   GetNode("bar.h")->MarkDirty();  // Mark bar.h as missing.
-  fs_.Create("foo.o.d", "foo.o: blah.h bar.h\n");
+  if (includeCFile) {
+    fs_.Create("foo.o.d", "foo.o: foo.c blah.h bar.h\n");
+  } else {
+    fs_.Create("foo.o.d", "foo.o: blah.h bar.h\n");
+  }
   EXPECT_TRUE(builder_.AddTarget("foo.o", &err));
   ASSERT_EQ("", err);
   ASSERT_EQ(1u, fs_.files_read_.size());
@@ -913,12 +921,26 @@ TEST_F(BuildTest, DepFileOK) {
 
   // Expect three new edges: one generating foo.o, and two more from
   // loading the depfile.
-  ASSERT_EQ(orig_edges + 3, (int)state_.edges_.size());
-  // Expect our edge to now have three inputs: foo.c and two headers.
-  ASSERT_EQ(3u, edge->inputs_.size());
+  EXPECT_EQ(orig_edges + 3, (int)state_.edges_.size());
+
+  if (includeCFile) {
+    // Expect our edge to now have four inputs: 2*foo.c and two headers.
+    EXPECT_EQ(4u, edge->inputs_.size());
+  } else {
+    // Expect our edge to now have three inputs: foo.c and two headers.
+    EXPECT_EQ(3u, edge->inputs_.size());
+  }
 
   // Expect the command line we generate to only use the original input.
-  ASSERT_EQ("cc foo.c", edge->EvaluateCommand());
+  EXPECT_EQ("cc foo.c", edge->EvaluateCommand());
+}
+
+TEST_F(BuildTest, DepFileOK) {
+  TestDepFileOK(false);
+}
+
+TEST_F(BuildTest, DepFileOKWithCFile) {
+  TestDepFileOK(true);
 }
 
 TEST_F(BuildTest, DepFileParseError) {
@@ -2759,6 +2781,8 @@ struct BuildWithHashLogTest : public BuildWithLogTest {
     unlink("HashLogTest-tempfile");
   }
 
+  void TestHashLogWithDepFile(bool includeFooC);
+
   HashLog hash_log_;
 };
 
@@ -2936,6 +2960,69 @@ TEST_F(BuildWithHashLogTest, HashLogWithPhony) {
   ASSERT_EQ("", err);
   EXPECT_TRUE(builder_.AlreadyUpToDate());
   EXPECT_FALSE(hash_log_.Used());
+}
+
+void BuildWithHashLogTest::TestHashLogWithDepFile(bool includeFooC) {
+  string err;
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule cc\n"
+"  command = cc $in\n"
+"  depfile = $out.d\n"
+"  hash_input = 1\n"
+"build foo.o: cc foo.c\n"));
+  Edge* edge = state_.edges_.back();
+
+  fs_.Create("foo.c", "");
+  fs_.Create("blah.h", "");
+  fs_.Create("bar.h", "");
+  if (includeFooC) {
+    fs_.Create("foo.o.d", "foo.o: foo.c blah.h bar.h\n");
+  } else {
+    fs_.Create("foo.o.d", "foo.o: blah.h bar.h\n");
+  }
+  EXPECT_TRUE(builder_.AddTarget("foo.o", &err));
+  ASSERT_EQ("", err);
+
+  // Expect our edge to now have four inputs: 2*foo.c and two headers.
+  if (includeFooC) {
+    ASSERT_EQ(4u, edge->inputs_.size());
+ } else {
+    ASSERT_EQ(3u, edge->inputs_.size());
+  }
+
+  // Build it
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+  // Build again with touched input, but with the same content
+  fs_.Tick();
+  fs_.Create("foo.c", "");
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  hash_log_.Close();
+  EXPECT_TRUE(builder_.AddTarget("foo.o", &err));
+  ASSERT_EQ("", err);
+
+  // Verify edge->inputs_ correctness
+  set<string> input_paths;
+  for (vector<Node*>::iterator it = edge->inputs_.begin();
+       it != edge->inputs_.end(); ++it) {
+    input_paths.insert((*it)->path());
+  }
+  EXPECT_EQ(3u, input_paths.size());
+
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_TRUE(hash_log_.Used());
+}
+
+TEST_F(BuildWithHashLogTest, HashLogWithDepFile) {
+  TestHashLogWithDepFile(false);
+}
+
+TEST_F(BuildWithHashLogTest, HashLogWithDepFileWithCFile) {
+  TestHashLogWithDepFile(true);
 }
 
 TEST_F(BuildWithHashLogTest, HashLogInputOrderIndependent) {

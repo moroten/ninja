@@ -238,7 +238,7 @@ struct ImplicitDepLoader {
   /// If we don't have a edge that generates this input already,
   /// create one; this makes us not abort if the input is missing,
   /// but instead will rebuild in that circumstance.
-  void CreatePhonyInEdge(Node* node);
+  bool CreatePhonyInEdge(Node* node, string* err);
 
   State* state_;
   DiskInterface* disk_interface_;

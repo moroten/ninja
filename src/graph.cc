@@ -592,7 +592,8 @@ bool ImplicitDepLoader::LoadDepFile(Edge* edge, const string& path,
     Node* node = state_->GetNode(*i, slash_bits);
     *implicit_dep = node;
     node->AddOutEdge(edge);
-    CreatePhonyInEdge(node);
+    if (!CreatePhonyInEdge(node, err))
+      return false;
   }
 
   return true;
@@ -621,7 +622,8 @@ bool ImplicitDepLoader::LoadDepsFromLog(Edge* edge, string* err) {
       Node* node = deps->nodes[i];
       *implicit_dep = node;
       node->AddOutEdge(edge);
-      CreatePhonyInEdge(node);
+      if (!CreatePhonyInEdge(node, err))
+        return false;
     }
   }
   return true;
@@ -635,9 +637,13 @@ vector<Node*>::iterator ImplicitDepLoader::PreallocateSpace(Edge* edge,
   return edge->inputs_.end() - edge->order_only_deps_ - count;
 }
 
-void ImplicitDepLoader::CreatePhonyInEdge(Node* node) {
+bool ImplicitDepLoader::CreatePhonyInEdge(Node* node, string* err) {
   if (node->in_edge())
-    return;
+    return true;
+  if (!node->StatIfNecessary(disk_interface_, err))
+    return false;
+  if (node->exists())
+    return true;
 
   Edge* phony_edge = state_->AddEdge(&State::kPhonyRule);
   node->set_in_edge(phony_edge);
@@ -650,4 +656,5 @@ void ImplicitDepLoader::CreatePhonyInEdge(Node* node) {
   // to avoid a potential stuck build.  If we do call RecomputeDirty for
   // this node, it will simply set outputs_ready_ to the correct value.
   phony_edge->outputs_ready_ = true;
+  return true;
 }
