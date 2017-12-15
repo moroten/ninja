@@ -848,7 +848,7 @@ TEST_F(ParserTest, MultipleOutputs) {
 
 TEST_F(ParserTest, MultipleImplicitOutputsWithDeps) {
   State local_state;
-  ManifestParser parser(&local_state, NULL, kDupeEdgeActionWarn);
+  ManifestParser parser(&local_state, NULL);
   string err;
   EXPECT_TRUE(parser.ParseTest("rule cc\n  command = foo\n  deps = gcc\n"
                                "build a.o | a.gcno: cc c.cc\n",
@@ -856,7 +856,18 @@ TEST_F(ParserTest, MultipleImplicitOutputsWithDeps) {
   EXPECT_EQ("", err);
 }
 
-TEST_F(ParserTest, MultipleOutputsWithDeps) {
+TEST_F(ParserTest, NoExplicitOutputWithDeps) {
+  State local_state;
+  ManifestParser parser(&local_state, NULL);
+  string err;
+  EXPECT_FALSE(parser.ParseTest("rule cc\n  command = foo\n  deps = gcc\n"
+                               "build | a.gcno b.gcno: cc c.cc\n",
+                               &err));
+  EXPECT_EQ("input:5: multiple outputs aren't (yet?) supported by depslog; "
+            "bring this up on the mailing list if it affects you\n", err);
+}
+
+TEST_F(ParserTest, MultipleExplicitOutputsWithDeps) {
   State local_state;
   ManifestParser parser(&local_state, NULL);
   string err;
