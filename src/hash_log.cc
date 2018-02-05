@@ -524,7 +524,12 @@ bool HashLog::Load(string* err) {
     *err = "incompatible hash log, resetting";
     Close();
     unlink(filename_.c_str());
-    return Load(err);
+    string inner_err;
+    if (!Load(&inner_err)) {
+      *err += " - " + inner_err;
+      return false;
+    }
+    return true;
   }
 
   // read hash/mtime/variant/path tuple stream
